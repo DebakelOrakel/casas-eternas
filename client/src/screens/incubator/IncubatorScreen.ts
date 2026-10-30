@@ -51,7 +51,7 @@ import { biomeLabelKey } from '../../generator/climate/biomes'
 import type { ChartWorkerInbound, ChartWorkerOutbound } from './chartWorker'
 import { decodeFineValue, ECOLOGY_FIELD_IDS, ECOLOGY_FINE_OCEAN, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
-import type { LevelLand } from '../../world/meshArtifacts'
+import { levelTemperatureYear, type LevelLand } from '../../world/meshArtifacts'
 import { POPULATION_STEP, type AnimalLayer, type PeopleResult, type PlantLayer, type SettleResult, type TreeLayer } from './cellsShared'
 import { KEEP_YEARS, SPAN_YEARS } from './peopleShared'
 import { flowAt, routeOrder, routesOf, type RouteLine } from './peopleArrows'
@@ -668,7 +668,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The level's land fields the hover readout (below) and the layers read.
   // None in a level made before its land fields. Only what it reads is
   // kept of the level's land fields.
-  let probe: { nodes: Int32Array; z: Float32Array; land: Pick<LevelLand, 'land' | 'biome' | 'koppen' | 'cratonAge' | 'ecology'> } | null = null
+  let probe: { nodes: Int32Array; z: Float32Array; land: Pick<LevelLand, 'land' | 'biome' | 'koppen' | 'cratonAge' | 'ecology' | 'temperature' | 'temperatureSwing' | 'temperatureMonths'> } | null = null
   function layerState(id: string): LayerState {
     if (id === 'terrain') return { on: terrainOn, available: charts !== null }
     if (id in peopleOn) return { on: peopleOn[id], available: id === 'people:routes' ? stone !== null : id === 'people:centres' ? stone !== null || settled !== null : settled !== null }
@@ -1306,13 +1306,20 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // at the chart point (u, v), its chart's texel under it — the year's
   // temperature, everywhere, and the rain on the land; and the value of the
   // climate layer shown, where it has one. Coarse, and of level 0's
-  // heights: level 1 has no climate of its own.
-  function climateRows(u: number, v: number, onLand: boolean): ProbeRow[] {
+  // heights. VARIANT B (TEG-109): the temperature of level 1's node where
+  // its artifact has it — the year's span and, in brackets, its mean, as
+  // the generator's card gives them.
+  function climateRows(u: number, v: number, onLand: boolean, node: number, year: number[] | null): ProbeRow[] {
     const at = (field: Float32Array, width: number, height: number): number =>
       field[Math.min(height - 1, Math.floor(v * height)) * width + Math.min(width - 1, Math.floor(u * width))]
     const rows: ProbeRow[] = []
     const f = climateFields
-    if (f?.temperature) rows.push({ label: t('readout.row.temperature'), value: formatValue(String(Math.round(at(f.temperature, f.width, f.height))), 'common.unit.celsius') })
+    const mean = probe?.land.temperature?.[node]
+    if (mean !== undefined) {
+      const shown = formatValue(String(Math.round(mean)), 'common.unit.celsius')
+      const span = year ? `${Math.round(Math.min(...year))}…${formatValue(String(Math.round(Math.max(...year))), 'common.unit.celsius')}` : null
+      rows.push({ label: t('readout.row.temperature'), value: span ? `${span} (${shown})` : shown })
+    } else if (f?.temperature) rows.push({ label: t('readout.row.temperature'), value: formatValue(String(Math.round(at(f.temperature, f.width, f.height))), 'common.unit.celsius') })
     if (onLand && f?.precipitation) {
       const mm = at(f.precipitation, f.width, f.height)
       if (mm !== OCEAN_PRECIP) rows.push({ label: t('readout.row.precipitation'), value: formatValue(String(Math.round(mm)), 'common.unit.millimetresPerYear') })
@@ -1343,13 +1350,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const metres = Math.round(elevationToMeters(probe.z[node]))
     const onLand = probe.land.land[node] === 1
     const koppen = probe.land.koppen[node]
+    const year = levelTemperatureYear(probe.land, node)
     return buildProbeCard({
       heading: metres >= 0 ? formatValue(String(metres), 'common.unit.metres') : t('readout.metresDeep', { v: String(-metres) }),
       kind: onLand ? t('readout.kind.land') : t('readout.kind.ocean'),
       land: onLand,
       highlights: onLand ? [...(koppen > 0 ? [t(koppenLabelKey(koppen) as TKey)] : []), t(biomeLabelKey(probe.land.biome[node]) as TKey)] : [],
       rows: [
-        ...climateRows(x / CHART_WIDTH, y / CHART_HEIGHT, onLand),
+        ...climateRows(x / CHART_WIDTH, y / CHART_HEIGHT, onLand, node, year),
         ...(onLand ? [
         ...[...TOOLTIP_FIELDS, ...(picked && !TOOLTIP_FIELDS.includes(picked) ? [picked] : [])].flatMap((id) => {
           const code = probe!.land.ecology[id]?.[node]
@@ -1360,7 +1368,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         ] : []),
       ],
       months: t('readout.months').split(','),
-      charts: [],
+      charts: year ? [{ label: t('readout.chart.temperature'), kind: 'line', values: year }] : [],
     })
   }
   const hoverTooltip = createMapHoverTooltip({
@@ -2331,7 +2339,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       ? { type: 'cells', seed: world.recipe.detailSeed, ...cellInputOf(kind, world.width, world.height, painted.nodes, level, land) }
       : null
     probe = land && painted.nodes && ecology
-      ? { nodes: painted.nodes, z: level.z, land: { land: land.land, biome: land.biome, koppen: land.koppen, cratonAge: land.cratonAge, ecology: ecology.fields } }
+      ? { nodes: painted.nodes, z: level.z, land: { land: land.land, biome: land.biome, koppen: land.koppen, cratonAge: land.cratonAge, ecology: ecology.fields, temperature: land.temperature, temperatureSwing: land.temperatureSwing, temperatureMonths: land.temperatureMonths } }
       : null
     hoverTooltip.refresh()
     // A world opens on the favourites of the step shown.

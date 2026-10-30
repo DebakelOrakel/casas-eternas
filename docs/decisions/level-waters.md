@@ -136,6 +136,24 @@ the f32 inputs (fork 2), so the packing does not reach it; it reaches a
 tile level that evaluates the rule on the packed inputs, and is checked
 there when one does.
 
+**Added 2026-10-30 (TEG-109): the temperature per node.** The stages
+compute the temperature at every node of level 1, the year's mean and
+the twelve months; the artifact keeps them for the incubator's hover
+card. As f32 they are 13 values a node, 432 MB on Morvane. The codes
+(`land_codes`) are 15 bytes a node, 125 MB on Morvane:
+
+| File | Encoding | Worst error back |
+|---|---|---|
+| `temperature.i16` | the mean, 0.1 °C a step | 0.05 °C |
+| `temperatureSwing.u8` | the months' largest distance from the mean, 0.5 °C a step, rounded up (to 127.5 °C) | none: it is a scale |
+| `temperatureMonths.i8` | each month, month-major, as 127ths of the swing about the mean | swing / 254 (0.04 °C at a swing of 10 °C) |
+
+The card draws the year scaled to its own range. Thus a month's step is
+1/254 of the chart's height for each swing, also on a flat tropical
+year, where a fixed step of 0.5 °C shows stairs. On the smoke worlds
+(512 × 256) the swing is 8.5–9 °C at the median and 18.5 °C at most;
+the mean of the decoded months is within 0.1 °C of the decoded mean.
+
 ## Seen on the way: the water table — not changed
 
 58 % of Morvane's land nodes have the water table at 0 m: 78 % of its

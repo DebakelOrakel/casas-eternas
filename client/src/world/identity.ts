@@ -300,6 +300,12 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // dry shelf to 120 m below the sea (TEG-13, shelfEcology.json and
 // shelfEco.<id>.u8), which the incubator reads. The worlds do not change;
 // level 1 does.
+// And, unreleased: level 1 carries the temperature per node — the year's
+// mean and the twelve months, in codes (TEG-109, the engine's
+// `land_codes`). The worlds do not change; level 1's files do.
+// And, unreleased: the mesh of a flat world locates a new node at the
+// float32 position it stores (TEG-115, 2026-10-30). Flat worlds change
+// a little; sphere worlds stay the same.
 export const AMPLIFICATION_ALGO_VERSION = 15
 
 // The constants the bake's output actually depends on. Passed in by the

@@ -676,6 +676,12 @@ pub struct LevelLand<'a> {
     pub lake_depth: &'a [f32],
     pub salt_flat: &'a [u8],
     pub water_table: Option<&'a [f32]>,
+    /// The temperature at the nodes, °C (TEG-109): the year's mean, and
+    /// the months, month-major (`PointMonths`: the month count, then its
+    /// values, `values.len() / months` a month). No months for a climate
+    /// without the refinement.
+    pub temperature: &'a [f32],
+    pub temperature_months: Option<(usize, &'a [f32])>,
     pub craton_age: &'a [f32],
     pub oases: &'a [(f64, f64)],
     pub volcanoes: &'a [Volcano],
@@ -690,11 +696,59 @@ pub struct LevelLand<'a> {
     pub shelf_ecology: &'a [(&'static str, Vec<u8>)],
 }
 
+/// A level's temperature as its files give it back (`land_codes`):
+/// the year's mean and the swing in their steps, each month a code of
+/// the swing about the mean.
+struct LevelTemperature {
+    mean: Value,
+    swing: Value,
+    months: Value,
+}
+
+/// The temperature per node in its codes (TEG-109): the mean a step 0.1
+/// °C, the swing (the months' largest distance from the mean) a step 0.5
+/// °C up, each month as 127ths of the swing about the mean. The values
+/// are the codes' values, so a level read back from its files is the
+/// same level.
+fn level_temperature(l: &LevelLand<'_>, count: usize) -> LevelTemperature {
+    use crate::formats::land_codes;
+    let mean: Vec<f32> = l.temperature[..count]
+        .iter()
+        .map(|&t| land_codes::temperature_of(land_codes::temperature(t)))
+        .collect();
+    let Some((months, values)) = l.temperature_months.filter(|&(m, _)| m > 0) else {
+        return LevelTemperature {
+            mean: Value::F32s(mean),
+            swing: Value::Null,
+            months: Value::Null,
+        };
+    };
+    let stride = values.len() / months;
+    let swing: Vec<f32> = (0..count)
+        .map(|v| {
+            let far = (0..months)
+                .map(|m| (values[m * stride + v] as f64 - mean[v] as f64).abs())
+                .fold(0.0, f64::max);
+            land_codes::temperature_swing_of(land_codes::temperature_swing(far))
+        })
+        .collect();
+    let codes = (0..months)
+        .flat_map(|m| (0..count).map(move |v| (m, v)))
+        .map(|(m, v)| land_codes::temperature_month(values[m * stride + v], mean[v], swing[v]))
+        .collect();
+    LevelTemperature {
+        mean: Value::F32s(mean),
+        swing: Value::F32s(swing),
+        months: Value::I8s(codes),
+    }
+}
+
 /// `LevelLand` as the artifact holds it: the per-node fields cut to the
 /// mesh's `count` nodes, the points as `[x, y, …]`, the volcanoes as
 /// `[x, y, thickness, kind, …]` (kind 0 hotspot, 1 flood, 2 arc, 3 extinct
 /// arc; DEC-0053).
 fn level_land(l: &LevelLand<'_>, count: usize) -> Value {
+    let temperature = level_temperature(l, count);
     let cut_u8 = |v: &[u8]| Value::U8s(v[..count].to_vec());
     let cut_f32 = |v: &[f32]| Value::F32s(v[..count].to_vec());
     let points = |p: &[(f64, f64)]| Value::F64s(p.iter().flat_map(|&(x, y)| [x, y]).collect());
@@ -720,6 +774,9 @@ fn level_land(l: &LevelLand<'_>, count: usize) -> Value {
         .put("lakeDepth", cut_f32(l.lake_depth))
         .put("saltFlat", cut_u8(l.salt_flat))
         .put("waterTable", l.water_table.map_or(Value::Null, cut_f32))
+        .put("temperature", temperature.mean)
+        .put("temperatureSwing", temperature.swing)
+        .put("temperatureMonths", temperature.months)
         .put("cratonAge", cut_f32(l.craton_age))
         .put("oases", points(l.oases))
         .put("volcanoes", Value::F64s(volcanoes))

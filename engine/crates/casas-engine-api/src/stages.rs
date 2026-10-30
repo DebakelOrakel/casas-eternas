@@ -824,6 +824,13 @@ impl World {
             lake_depth,
             salt_flat: &om.lakes.salt_flat,
             water_table: om.water_table.as_deref(),
+            temperature: &om.land.climate.temperature,
+            temperature_months: om
+                .land
+                .climate
+                .months
+                .as_ref()
+                .map(|m| (m.count, &m.temperature[..])),
             craton_age: &eco.craton_age,
             oases: &eco.oases,
             volcanoes: &eco.volcanoes,

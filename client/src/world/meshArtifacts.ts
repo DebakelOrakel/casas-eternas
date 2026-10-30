@@ -111,6 +111,14 @@ export interface LevelLand {
   saltFlat: Uint8Array
   // The water table's depth, metres; −1 under water. Null without one.
   waterTable: Float32Array | null
+  // The temperature, °C (TEG-109; the engine's `land_codes`): the year's
+  // mean, to 0.1 °C. With the climate's months, the swing (the months'
+  // largest distance from the mean, rounded up to 0.5 °C) and the months,
+  // month-major, each a code: mean + swing · code / 127
+  // (levelTemperatureYear). Absent in a level made before 2026-10-30.
+  temperature?: Float32Array | null
+  temperatureSwing?: Float32Array | null
+  temperatureMonths?: Int8Array | null
   // The cratons' oldness as a share, −1 at sea.
   cratonAge: Float32Array
   // [x, y, …] in world raster cells.
@@ -129,6 +137,21 @@ export interface LevelLand {
   // ECOLOGY_FINE_OCEAN off the shelf; none in a level made without an
   // ecology run.
   shelfEcology: Partial<Record<EcologyFieldId, Uint8Array>>
+}
+
+// The months' code range (the engine's `land_codes::TEMPERATURE_MONTH_TOP`).
+const TEMPERATURE_MONTH_TOP = 127
+
+// A node's year of temperatures, °C, a value a month; null in a level
+// without the months.
+export function levelTemperatureYear(land: Pick<LevelLand, 'temperature' | 'temperatureSwing' | 'temperatureMonths'>, node: number): number[] | null {
+  if (!land.temperature || !land.temperatureSwing || !land.temperatureMonths) return null
+  const count = land.temperatureSwing.length
+  const year: number[] = []
+  for (let at = node; at < land.temperatureMonths.length; at += count) {
+    year.push(land.temperature[node] + (land.temperatureSwing[node] * land.temperatureMonths[at]) / TEMPERATURE_MONTH_TOP)
+  }
+  return year
 }
 
 interface MeshLevelMeta {

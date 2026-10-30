@@ -6,6 +6,7 @@ The incubator's controls and layout are in [ui.md](./ui.md).
 
 ## 2026-10-30
 - **changed** Old Stone Age: a shelf the low sea lays dry feeds the people as its own land would, not as the coast beside it. `incubator.step.oldStoneAge`
+- **new** Overlays: the hover card shows the temperature of the point under the pointer over the year, as a curve. `readout.chart.temperature`
 - **new** Old Stone Age: two sliders set the reach of boats over the sea and the lowest sea level. `incubator.people.reach`
 
 ## 2026-10-29

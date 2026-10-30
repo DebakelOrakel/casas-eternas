@@ -40,6 +40,12 @@ pub const LEVEL_DISCHARGE: &str = "discharge.u16";
 pub const LEVEL_LAKE_DEPTH: &str = "lakeDepth.u16";
 pub const LEVEL_WATER_TABLE: &str = "waterTable.u16";
 pub const LEVEL_CRATON_AGE: &str = "cratonAge.u16";
+// The temperature per node (TEG-109, `land_codes`): the year's mean, the
+// swing, and the months (month-major, a byte a node a month); the swing
+// and the months only for a climate with months.
+pub const LEVEL_TEMPERATURE: &str = "temperature.i16";
+pub const LEVEL_TEMPERATURE_SWING: &str = "temperatureSwing.u8";
+pub const LEVEL_TEMPERATURE_MONTHS: &str = "temperatureMonths.i8";
 pub const LEVEL_OASES: &str = "oases.f64";
 pub const LEVEL_VOLCANOES: &str = "volcanoes.f64";
 pub const LEVEL_OROGEN_POINTS: &str = "orogenPoints.f64";
@@ -139,6 +145,44 @@ pub mod land_codes {
     }
     pub fn craton_age_of(c: u16) -> f32 {
         (CRATON_AGE_MIN + c as f64 / TOP * (CRATON_AGE_MAX - CRATON_AGE_MIN)) as f32
+    }
+
+    /// The temperature (TEG-109), °C. The year's mean: a signed 16-bit
+    /// code, a step TEMPERATURE_STEP_C. The swing, the months' largest
+    /// distance from the mean: a byte, a step TEMPERATURE_SWING_STEP_C,
+    /// rounded up so that no month is outside it (to 127.5 °C). A month:
+    /// a signed byte, the distance from the mean in 127ths of the swing.
+    /// The hover card draws the year scaled to its own range, so the step
+    /// of a month is 1/254 of the chart's height, whatever the swing; the
+    /// error of a month is at most a quarter step of its swing (0.25 °C at
+    /// a swing of 64 °C) plus the mean's 0.05 °C.
+    pub const TEMPERATURE_STEP_C: f64 = 0.1;
+    pub const TEMPERATURE_SWING_STEP_C: f64 = 0.5;
+    pub const TEMPERATURE_MONTH_TOP: f64 = 127.0;
+
+    pub fn temperature(v: f32) -> i16 {
+        (v as f64 / TEMPERATURE_STEP_C)
+            .round()
+            .clamp(-32767.0, 32767.0) as i16
+    }
+    pub fn temperature_of(c: i16) -> f32 {
+        (c as f64 * TEMPERATURE_STEP_C) as f32
+    }
+    pub fn temperature_swing(v: f64) -> u8 {
+        (v / TEMPERATURE_SWING_STEP_C).ceil().clamp(0.0, 255.0) as u8
+    }
+    pub fn temperature_swing_of(c: u8) -> f32 {
+        (c as f64 * TEMPERATURE_SWING_STEP_C) as f32
+    }
+    /// A month at `t` °C about the node's mean and swing (their codes'
+    /// values).
+    pub fn temperature_month(t: f32, mean: f32, swing: f32) -> i8 {
+        if swing <= 0.0 {
+            return 0;
+        }
+        ((t as f64 - mean as f64) / swing as f64 * TEMPERATURE_MONTH_TOP)
+            .round()
+            .clamp(-TEMPERATURE_MONTH_TOP, TEMPERATURE_MONTH_TOP) as i8
     }
 }
 
@@ -524,6 +568,40 @@ fn level_land_files(files: ObjBuilder, land: &Value, z: &Value) -> Result<ObjBui
             Value::U8s(coded(table, "waterTable", land_codes::water_table)?),
         );
     }
+    level_temperature_files(files, land)
+}
+
+/// The temperature's files (TEG-109, `land_codes`): none for a level
+/// without it, the swing and the months only with months.
+fn level_temperature_files(files: ObjBuilder, land: &Value) -> Result<ObjBuilder, EraError> {
+    let what = "the level's temperature";
+    let Some(Value::F32s(mean)) = given(land, "temperature") else {
+        return Ok(files);
+    };
+    let mean = mean
+        .iter()
+        .flat_map(|&t| land_codes::temperature(t).to_le_bytes())
+        .collect();
+    let mut files = files.put(LEVEL_TEMPERATURE, Value::U8s(mean));
+    if let (Some(Value::F32s(swing)), Some(months)) = (
+        given(land, "temperatureSwing"),
+        given(land, "temperatureMonths"),
+    ) {
+        let Value::I8s(_) = months else {
+            return Err(EraError(format!("{what}'s months are not Int8s")));
+        };
+        files = files
+            .put(
+                LEVEL_TEMPERATURE_SWING,
+                Value::U8s(
+                    swing
+                        .iter()
+                        .map(|&s| land_codes::temperature_swing(s as f64))
+                        .collect(),
+                ),
+            )
+            .put(LEVEL_TEMPERATURE_MONTHS, Value::U8s(bytes(months)?));
+    }
     Ok(files)
 }
 
@@ -860,6 +938,36 @@ fn level_land_of(files: &Value, meta: &Value) -> Result<Value, EraError> {
             },
         )
         .put(
+            "temperature",
+            match optional_file(files, LEVEL_TEMPERATURE) {
+                Some(b) => Value::F32s(
+                    words(b, LEVEL_TEMPERATURE, "Int16s", i16::from_le_bytes)?
+                        .into_iter()
+                        .map(land_codes::temperature_of)
+                        .collect(),
+                ),
+                None => Value::Null,
+            },
+        )
+        .put(
+            "temperatureSwing",
+            match optional_file(files, LEVEL_TEMPERATURE_SWING) {
+                Some(b) => Value::F32s(
+                    b.iter()
+                        .map(|&c| land_codes::temperature_swing_of(c))
+                        .collect(),
+                ),
+                None => Value::Null,
+            },
+        )
+        .put(
+            "temperatureMonths",
+            match optional_file(files, LEVEL_TEMPERATURE_MONTHS) {
+                Some(b) => Value::I8s(b.iter().map(|&c| c as i8).collect()),
+                None => Value::Null,
+            },
+        )
+        .put(
             "cratonAge",
             decoded(LEVEL_CRATON_AGE, land_codes::craton_age_of)?,
         )
@@ -955,6 +1063,31 @@ pub fn tile_of_files(files: &Value) -> Result<Value, EraError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The temperature's codes (TEG-109): a value read back writes the
+    /// same code, and a month comes back within its error.
+    #[test]
+    fn temperature_codes_hold() {
+        use land_codes::*;
+        for c in [-32767i16, -700, -1, 0, 1, 345, 32767] {
+            assert_eq!(temperature(temperature_of(c)), c);
+        }
+        for c in 0..=255u8 {
+            assert_eq!(temperature_swing(temperature_swing_of(c) as f64), c);
+        }
+        let mean = temperature_of(temperature(-12.34));
+        let months = [-41.7f32, -30.2, -12.0, 3.5, 15.9, 21.3];
+        let far = months
+            .iter()
+            .map(|&t| (t as f64 - mean as f64).abs())
+            .fold(0.0, f64::max);
+        let swing = temperature_swing_of(temperature_swing(far));
+        for t in months {
+            let code = temperature_month(t, mean, swing);
+            let back = mean as f64 + swing as f64 * code as f64 / TEMPERATURE_MONTH_TOP;
+            assert!((back - t as f64).abs() <= swing as f64 / (2.0 * TEMPERATURE_MONTH_TOP) + 1e-6);
+        }
+    }
 
     #[test]
     fn json_is_javascripts() {
