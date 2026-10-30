@@ -697,7 +697,9 @@ Open:
    of 3.7 M km²: step 1 reaches 14.8 % of the land, step 2 has no city.
 8. No farming centre in the deserts (BW) since the flood silt either
    (2026-10-30, Status): the floodplain is narrower than a cell, and a
-   cell's arable land is the mean over its land. To decide: a centre
-   reads the best of a cell's land, a cell's arable land is its land's
-   best share, or the threshold stays and the deserts' rivers have
-   villages but no centre.
+   cell's arable land is the mean over its land. Decided 2026-10-30: no
+   centre in the deserts (on the earth the Nile was no origin; the
+   fields came from the Levant). But a cell suits the fields when its
+   land's best share reaches FARM_ARABLE, not its mean, so that the fields
+   reach a desert's floodplain; the carrying capacity keeps the mean.
+   With TEG-10.
