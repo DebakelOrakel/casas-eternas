@@ -2,7 +2,8 @@
 //! `tectonics/`: the same scenarios give the same bits
 //! (docs/decisions/rust-engine.md, fork 5). The fixture is written by
 //! `engine/scripts/tectonicsFixture.mjs`; the scenarios below are that
-//! script's, step for step.
+//! script's, step for step. A change to the model that is meant records
+//! the lines it moves (`fixture`, CASAS_RECORD=1).
 
 #![allow(clippy::needless_range_loop)]
 
@@ -28,11 +29,16 @@ use casas_engine::tectonics::plate_velocity_decomposition::{
 };
 use casas_engine::tectonics::plumes as pl;
 use casas_engine::tectonics::tectonics_tune_params::TECTONICS_TUNING as T;
+
+mod fixture;
+
 use casas_engine::tectonics::terrain_features::{
     FeatureKind, MovesWith, TerrainFeature, advance_terrain_features, find_or_create_feature_index,
 };
 use casas_engine::tectonics::volcanoes::{VolcanoKind, collect_volcanoes};
+use fixture::check;
 
+const FILE: &str = "tectonics.txt";
 const FIXTURE: &str = include_str!("fixtures/tectonics.txt");
 
 struct Gen(u32);
@@ -164,6 +170,8 @@ fn the_tuning_is_the_typescript_tuning() {
         T.ocean_age_init,
         T.breakup_fresh_crust_radius_m,
         T.mantle_coupling_rate,
+        T.seed_recentre_rate,
+        T.keel_drag,
         T.hotspot_deposit_per_epoch,
         T.hotspot_epoch_interval,
         T.flood_basalt_deposit,
@@ -191,7 +199,7 @@ fn the_tuning_is_the_typescript_tuning() {
     ] {
         h.add(v);
     }
-    assert_eq!(h.line("tuning"), expected("tuning"));
+    check(FILE, &h.line("tuning"), &expected("tuning"), "tuning");
 }
 
 fn scenario(name: &str, d: Domain, seed: u32) {
@@ -243,10 +251,8 @@ fn scenario(name: &str, d: Domain, seed: u32) {
         pm::relax_motion_toward(&mut motions[p], &fit[p], 0.15);
         h.motion(&motions[p]);
     }
-    assert_eq!(
-        h.line(&format!("{name}_motion")),
-        expected(&format!("{name}_motion"))
-    );
+    let line = format!("{name}_motion");
+    check(FILE, &h.line(&line), &expected(&line), &line);
 
     let mut h = Hash::new();
     let lattice = generate_detection_lattice(&d, 256, 128);
@@ -310,10 +316,8 @@ fn scenario(name: &str, d: Domain, seed: u32) {
         h.add(k.rate);
         h.add(k.elevation_sign as f64);
     }
-    assert_eq!(
-        h.line(&format!("{name}_boundaries")),
-        expected(&format!("{name}_boundaries"))
-    );
+    let line = format!("{name}_boundaries");
+    check(FILE, &h.line(&line), &expected(&line), &line);
 
     let mut h = Hash::new();
     let mut features: Vec<TerrainFeature> = Vec::new();
@@ -390,10 +394,8 @@ fn scenario(name: &str, d: Domain, seed: u32) {
             VolcanoKind::ExtinctArc => 3.0,
         });
     }
-    assert_eq!(
-        h.line(&format!("{name}_features")),
-        expected(&format!("{name}_features"))
-    );
+    let line = format!("{name}_features");
+    check(FILE, &h.line(&line), &expected(&line), &line);
 }
 
 #[test]
@@ -503,10 +505,8 @@ fn stage_two(name: &str, d: Domain, seed: u32) {
             0.0
         },
     );
-    assert_eq!(
-        h.line(&format!("{name}_ocean_age")),
-        expected(&format!("{name}_ocean_age"))
-    );
+    let line = format!("{name}_ocean_age");
+    check(FILE, &h.line(&line), &expected(&line), &line);
 
     let mut h = Hash::new();
     for k in 0..500 {
@@ -552,10 +552,8 @@ fn stage_two(name: &str, d: Domain, seed: u32) {
     }
     h.add(sm.mesh.tri.last_tri as f64);
     h.add(sm.mesh.tri.walk_steps as f64);
-    assert_eq!(
-        h.line(&format!("{name}_flexure")),
-        expected(&format!("{name}_flexure"))
-    );
+    let line = format!("{name}_flexure");
+    check(FILE, &h.line(&line), &expected(&line), &line);
 
     let mut h = Hash::new();
     let mut mm = m::mantle_mesh(&d);
@@ -578,10 +576,8 @@ fn stage_two(name: &str, d: Domain, seed: u32) {
             h.add(p.birth_epoch);
         }
     }
-    assert_eq!(
-        h.line(&format!("{name}_plumes")),
-        expected(&format!("{name}_plumes"))
-    );
+    let line = format!("{name}_plumes");
+    check(FILE, &h.line(&line), &expected(&line), &line);
 }
 
 #[test]

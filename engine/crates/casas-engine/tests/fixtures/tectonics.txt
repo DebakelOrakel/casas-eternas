@@ -1,6 +1,6 @@
 # Hashes of client/src/generator/tectonics/, for crates/casas-engine/tests/tectonics.rs.
 # Written by engine/scripts/tectonicsFixture.mjs; do not edit.
-tuning eae408dc
+tuning 46d45709
 torus_motion d61ca177
 torus_boundaries 42ee9ddc
 torus_features cd8bc956

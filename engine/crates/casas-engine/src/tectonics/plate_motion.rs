@@ -405,6 +405,18 @@ pub fn relax_motion_toward(motion: &mut PlateMotion, target: &PlateMotion, fract
     }
 }
 
+/// A motion scaled by `k`: its drift and spin, or its Euler rate.
+pub fn scale_motion(motion: &mut PlateMotion, k: f64) {
+    match motion {
+        PlateMotion::Euler(e) => e.rate *= k,
+        PlateMotion::Rigid(r) => {
+            r.drift_x *= k;
+            r.drift_y *= k;
+            r.spin *= k;
+        }
+    }
+}
+
 /// The motion that moves (x, y) with velocity (vx, vy) and does not turn
 /// about it.
 pub fn motion_moving_at(x: f64, y: f64, vx: f64, vy: f64, domain: &Domain) -> PlateMotion {

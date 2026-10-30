@@ -4,6 +4,9 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-10-29
+- **fixed** Tectonics: plates no longer crowd into one region and freeze over a long history, so about a dozen plates stay spread over the world, and a seed makes a different world. `generator.step.tectonics`
+- **changed** Tectonics: continents move at about 20 km per million years and the open oceans at 50 to 80, as on Earth, so a seed makes a different world. `generator.step.tectonics`
+- **fixed** Tectonics: continents grow and plates are consumed only where a continent meets the ocean, no longer where ocean meets ocean, so a seed makes a different world. `generator.step.tectonics`
 - **fixed** Tectonics: land rising from the deep sea no longer erodes in coarse patches for a few epochs, so a seed makes a slightly different world. `generator.step.tectonics`
 - **fixed** Refinement: refined tiles no longer show a raised line along their borders; levels 2 and 3 are refined again. `generator.finishing.refine`
 - **changed** Ecology: arable land follows what crops need over one growing season, so the temperate and wet lands farm about twice as much and the wet tropics less. `resource.arable`

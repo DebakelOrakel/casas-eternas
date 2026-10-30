@@ -10,7 +10,7 @@ summary.de: Kontinentale Kruste als dauerhafte „Flösse“, entkoppelt von den
 area: generator
 stage: built
 createdAt: 2026-07-24
-updatedAt: 2026-10-14
+updatedAt: 2026-10-29
 concepts: [generator.concept.craton, generator.concept.young-crust]
 related: [DEC-0011]
 ---
@@ -243,8 +243,8 @@ Built 2026-07-24, all verified via a headless render harness:
   (`derivePlateTypes` — continental if a raft covers the seed), a Phase-1
   bridge, not the direct "is there a raft on side A/B?" the design
   describes. Fine in practice; cleanup deferred. (The relief reads the
-  crust since 2026-10-14 — the addendum below; the events still read the
-  bridge.)
+  crust since 2026-10-14 — the addendum below; the events and the
+  history's trench since 2026-10-29.)
 - **Raft motion is rigid** (whole raft on one host plate), not per-blob.
 - **Island-arc proto-continent birth** not built yet.
 - The derived `plate.type` and the per-plate `continentNames` still exist
@@ -342,15 +342,26 @@ a subduction arc, the continental rift) and the history's trench
 (tectonics/trench.ts) still read the derived plate type: the bridge is
 retired for the relief only.
 
+Since 2026-10-29 ([DES-0027](../design/calibration-backlog.md) entry 27)
+the events read the crust too: the boundary pass classifies every point
+from the crust on each side — the lattice's accumulation, the accretion
+(inset into the continental side), the plate merge and its oceanic
+plate's consumption — and the history's trench classifies its point the
+same way. Accretions where ocean meets ocean (90–96 % of them before)
+are gone. The derived type stays for the plate rift's event (which side
+is continental).
+
 ## Remaining
 
 - **Phase 2 optionals:** island-arc births; boundary classification from
-  direct raft geometry for the events and the history's trench — the
-  relief reads it since DEC-0036 phase 8g-2 (the addendum above); the
-  derived `plate.type` bridge stays for the rest.
+  direct raft geometry — the relief reads it since DEC-0036 phase 8g-2,
+  the events and the history's trench since 2026-10-29 (the addendum
+  above); the derived `plate.type` bridge stays for the rest.
 - Revisit later whether further design decisions warrant their own docs.
 
 ## Status
 
 decided; Phases 1–5 implemented. 2026-10-14: the relief's boundary
 classification reads the crust on each side (the addendum above).
+2026-10-29: the events and the history's trench read it too (the
+addendum, DES-0027 entry 27).

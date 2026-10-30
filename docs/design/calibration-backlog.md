@@ -48,20 +48,52 @@ procedure.
    thousand km² (torus / sphere; 8g: 8 / 8), the land above 4500 m 0.46 /
    0.28 % (Earth ~0.4). A Tibet needs a collision that goes on after the
    suture (entry 28).
-2. **No keel drag.** Continental plates move as fast as oceanic ones
+2. ~~**No keel drag.** Continental plates move as fast as oceanic ones
    (57 / 58 km/Myr torus, 48 / 53 sphere; Earth 10–30 / 50–100). The plates
    follow the rigid fit of the mantle flow without a force balance. Found
-   in 8f. 3–5 h.
+   in 8f. 3–5 h.~~
+   Done 2026-10-29 (TEG-51): each plate's fitted motion is scaled by
+   1 / (1 + `keelDrag` · f), f the continental crust it carries over its
+   footprint (tectonics/epoch/mantle_coupling.rs `keel_factor`), and the
+   mantle's flow is faster to bring the oceans back
+   (`mantleFlowSpeedKmPerMyr` 16 → 28). Not a force balance. 6 seeds per
+   shape (torus / sphere), 2048 × 1024, archean 200, epochs 1–100, the
+   speed weighted by the crust's area, continents / oceans: before
+   (with entry 4) 47 / 46 and 33 / 45 km/Myr; with `keelDrag` 3 and 25
+   km/Myr 22 / 49 and 21 / 42; after entry 27 that setting gave a ratio
+   of 0.52 on both shapes, so `keelDrag` 4 and 28 km/Myr: 23 / 55 and
+   21 / 53 (ratio 0.42 / 0.39). By plate (a plate with more than half of
+   continental crust against one with less than 15 %): 37 / 86 and 19 /
+   73. The coupled history at epoch 40: 30 / 81 and 24 / 71. Tried on the
+   way: `keelDrag` 2 with 22 km/Myr (25 / 46, 24 / 39), 3 with 30 (34 /
+   68, 24 / 42), 4 with 30 (25 / 61, 21 / 42), 4 with 25 after entry 27
+   (25 / 55, 21 / 48). The sphere's oceans gain little past 25 km/Myr. A
+   seed makes a different world (pipeline v15).
 3. **The supercontinent cycle is too short.** Assembly intervals of
    15–175 Ma on the torus (a noisy proxy), one assembly on one of three
    sphere seeds (Earth 400–600 Ma). It may not be reachable with today's
    mantle model; the largest uncertainty in this list. Found in 8f. 4–6 h,
    or a design question first.
-4. **Seeds cluster and freeze a world (sphere).** Seed zulu, 600 plain
+4. ~~**Seeds cluster and freeze a world (sphere).** Seed zulu, 600 plain
    epochs: from about epoch 200, 11 of 12 seeds crowd one region; plates
    with no mantle cells fit no motion and crawl at 6–10 km/Myr against a
    fit of 35–50; no merge fires. Cause: the fit's nearest-seed footprint.
-   Beyond the screen's 100 epochs. Found in 8f. 2–4 h.
+   Beyond the screen's 100 epochs. Found in 8f. 2–4 h.~~
+   Done 2026-10-29 (TEG-53, TEG-104): each epoch, before the fit, a
+   plate's seed moves `seedRecentreRate` (5 %) of the way to its
+   footprint's centroid on the mantle mesh — a damped Lloyd step
+   (tectonics/epoch/mantle_coupling.rs `recentre_seeds`). 6 seeds per
+   shape (torus / sphere), 2048 × 1024, archean 200, 600 plain epochs,
+   before → after: the Clark–Evans ratio of the seeds (1 a random
+   pattern, over 1 spread) at epochs 500–600 0.54 / 0.95 → 1.31 / 1.39
+   (epoch 100 0.82 / 0.91 → 1.32 / 1.36); the plates at epoch 600 3 / 9
+   → 12 / 11.5, the fewest after epoch 100 3 / 6 → 8.5 / 7; plates with no
+   mantle cell after epoch 200 0 / 0.08 an epoch → 0 / 0; the speed at
+   epochs 300–600 28 / 22 → 36 / 29 km/Myr. The coupled history (60
+   epochs): the land at epoch 60 31.1 / 31.1 → 30.9 / 30.9 %, its mean
+   height 1060 / 788 → 922 / 732 m. With entries 2 and 27: the ratio
+   1.21 / 1.39, 18 / 13 plates at epoch 600. A seed makes a different
+   world (pipeline v15).
 
 ## Ocean margins
 
@@ -242,7 +274,7 @@ procedure.
     measured. A larger intraplate share would lift the sphere and push the
     torus's land above 2000 m past Earth's (0.4: 772 / 634 m, 6.5 / 4.8 %,
     6 seeds). Found in 8g-2. 2–4 h.
-27. **The events still read the plates' derived type.** The plate merge,
+27. ~~**The events still read the plates' derived type.**~~ The plate merge,
     the oceanic plate's consumption, the accretion at a subduction arc and
     the history's trench (tectonics/trench.ts) take a plate's type from
     the crust under its seed (DEC-0003's bridge); only the relief reads the
@@ -251,6 +283,24 @@ procedure.
     boundaries with ocean on both sides classed as a subduction arc or a
     fold belt, so an accretion blob or a merge can fire where no
     continent is. Found in 8g-2. 2–3 h.
+    Done 2026-10-29 (TEG-72): the boundary pass reads the crust 156 km
+    into each side (`crustSideM`) for everything — the lattice's
+    accumulation, the accretion (inset into the continental side along
+    the boundary's normal), the merge and its oceanic plate's
+    consumption (`MergeEvent.removed_oceanic`) — and the history's trench
+    reads it at its point (tectonics/trench.rs). The plate rift's event
+    and `derive_plate_types` stay for the rest. 6 seeds per shape (torus
+    / sphere), 600 plain epochs, before (with entries 4 and 2, their
+    final constants) → after: the convergent weight whose event
+    character is not the crust's 24 / 30 % → 0 (epochs 1–100; ocean on
+    both sides classed as an arc or a fold belt 9 / 15 % → 0);
+    accretions in 600 Ma 1460 / 1490, 90 / 93 % of them where ocean
+    meets ocean → 150 / 140, none; the continental crust's share at
+    epoch 600 0.47 / 0.43 → 0.43 / 0.39 (0.36 / 0.35 at epoch 0; before
+    entries 4 and 2 0.43 / 0.39). The coupled history at epoch 60: the
+    land 31.8 / 33.2 → 29.9 / 29.1 %, its mean height 966 / 818 → 1010 /
+    736 m, the land above 2000 m 13.8 / 9.5 → 14.8 / 6.7 % (the height
+    is round 2's). A seed makes a different world (pipeline v15).
 28. **A collision stops at the suture.** Rafts merge as soon as their
     coasts touch (mergeOverlappingRafts) and the merged raft rides one
     host plate, so the land across the suture converges no more; 0–1
@@ -286,9 +336,9 @@ procedure.
 
 ## Status
 
-2026-10-29: building — the list is worked one entry at a time (8, 16, 19,
-22, 24, 30 and 31 done, 25 for the relief; 14 has its instrument back;
-see the entries below), the rest stays open.
+2026-10-29: building — the list is worked one entry at a time (2, 4, 8,
+16, 19, 22, 24, 27, 30 and 31 done, 25 for the relief; 14 has its
+instrument back; see the entries below), the rest stays open.
 
 2026-10-14: IDEA — the list, recorded when phase 8 was cut short. Take an
 entry up when a world shows it; record its result in the doc of the

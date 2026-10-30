@@ -3,7 +3,9 @@
 //! pipeline/erosion_forcing) against the TypeScript engine: the same
 //! scenarios give the same bits (docs/decisions/rust-engine.md, fork 5).
 //! The fixture is written by `engine/scripts/forcingFixture.mjs`; the
-//! scenarios below are that script's, step for step.
+//! scenarios below are that script's, step for step. A change to the
+//! model that is meant records the lines it moves (`fixture`,
+//! CASAS_RECORD=1).
 
 use casas_engine::core::domain::Domain;
 use casas_engine::core::world_time::world_epoch;
@@ -20,6 +22,7 @@ use casas_engine::surface::erosion_forcing_fields::{
 use casas_engine::tectonics::plate_simulation::step_epoch;
 use casas_engine::tectonics::terrain_features::{FeatureKind, MovesWith, TerrainFeature};
 
+mod fixture;
 mod synthetic_sim;
 
 use synthetic_sim::{Gen, synthetic_sim};
@@ -88,7 +91,7 @@ impl Hash {
             .lines()
             .find(|l| l.split_whitespace().next() == Some(name))
             .unwrap_or_else(|| panic!("no {name} in the fixture"));
-        assert_eq!(format!("{name} {:08x}", self.0), want);
+        fixture::check("forcing.txt", &format!("{name} {:08x}", self.0), want, name);
     }
 }
 

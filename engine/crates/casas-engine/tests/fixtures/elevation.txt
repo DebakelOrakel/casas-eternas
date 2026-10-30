@@ -4,7 +4,7 @@ scale ab7ea84c
 torus_noise 01c91b9d
 sphere_noise aec48210
 torus_features c6ac2489
-torus_baseline 36432b2c
+torus_baseline 6079c4c8
 sphere_features 4e158f3a
-sphere_baseline e6d546ca
+sphere_baseline 920936d5
 redistribution bb4a2133

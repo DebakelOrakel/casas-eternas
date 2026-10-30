@@ -179,4 +179,6 @@ pub struct MergeEvent {
     pub y: f64,
     pub keep_index: usize,
     pub remove_index: usize,
+    /// The crust on the removed plate's side of the boundary is oceanic.
+    pub removed_oceanic: bool,
 }

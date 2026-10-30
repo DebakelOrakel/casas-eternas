@@ -49,6 +49,8 @@ pub struct TectonicsTuning {
     pub ocean_age_init: f64,
     pub breakup_fresh_crust_radius_m: f64,
     pub mantle_coupling_rate: f64,
+    pub seed_recentre_rate: f64,
+    pub keel_drag: f64,
     pub hotspot_deposit_per_epoch: f64,
     pub hotspot_epoch_interval: f64,
     pub flood_basalt_deposit: f64,
@@ -86,7 +88,10 @@ const SPLIT_GAP_M: f64 = 624_000.0;
 pub const TECTONICS_TUNING: TectonicsTuning = TectonicsTuning {
     detection_lattice_resolution_x: 256,
     detection_lattice_resolution_y: 128,
-    mantle_flow_speed_km_per_myr: 16.0,
+    // 16 → 28 with the keel's drag (TEG-51; DES-0027 entry 2, 2026-10-29):
+    // the drag slows the continental plates, the faster flow brings the
+    // oceanic ones back to Earth's 50–100 km/Myr. Tuned with `keel_drag`.
+    mantle_flow_speed_km_per_myr: 28.0,
     uplift_per_km: 0.01 / (0.05 * 7.8),
     orogen_crust_m: 40_000.0,
     shortening_half_life_ma: 2.0,
@@ -127,6 +132,22 @@ pub const TECTONICS_TUNING: TectonicsTuning = TectonicsTuning {
     ocean_age_init: 40.0,
     breakup_fresh_crust_radius_m: SPLIT_GAP_M,
     mantle_coupling_rate: 0.15,
+    // THE SEEDS' LLOYD STEP (TEG-53, TEG-104; DES-0027 entry 4,
+    // 2026-10-29): each epoch a seed moves this share of the way to its
+    // footprint's centroid (epoch/mantle_coupling.rs). 6 seeds per shape
+    // (torus / sphere), 2048 × 1024, archean 200, 600 plain epochs, before
+    // → after: the seeds' Clark–Evans ratio at epochs 500–600 0.54 / 0.95
+    // → 1.31 / 1.39, the plates at epoch 600 3 / 9 → 12 / 11.5, plates
+    // with no mantle cell 0 / 0.08 an epoch → 0 (DES-0027 entry 4).
+    seed_recentre_rate: 0.05,
+    // THE KEEL'S DRAG (TEG-51; DES-0027 entry 2, 2026-10-29): a plate's
+    // fitted motion over 1 + this × its continental share
+    // (epoch/mantle_coupling.rs). Tuned with `mantle_flow_speed_km_per_myr`
+    // on 6 seeds per shape (torus / sphere, epochs 1–100, by the crust's
+    // area): continents / oceans 47 / 46 and 33 / 45 km/Myr before, 23 /
+    // 55 and 21 / 53 with 4 and 28 (3 and 25 gave a ratio of 0.52 once the
+    // events read the crust; DES-0027 entry 2 has the sweep).
+    keel_drag: 4.0,
     hotspot_deposit_per_epoch: 4.0,
     hotspot_epoch_interval: 2.0,
     flood_basalt_deposit: 50.0,

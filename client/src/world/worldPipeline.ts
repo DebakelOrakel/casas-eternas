@@ -35,7 +35,8 @@ const PIPELINE_OF_CODE: Readonly<Record<string, string>> = {
 // derives level 1's waters from the save's climate (docs/decisions/
 // level-waters.md), so their levels differ, each under its own version.
 // v15 makes other worlds than v14: an epoch with coarse land remeshes
-// (DES-0027 entry 19, 2026-10-29), besides level 1's other ecology fields.
+// (DES-0027 entry 19, 2026-10-29) and the plates move otherwise (entries
+// 4, 2 and 27, the same day), besides level 1's other ecology fields.
 // Not a migration: a statement of equality of the worlds. Each entry
 // names the current pipeline, not the next one: the lookup is one step.
 const SAME_WORLDS_AS: Readonly<Record<string, string>> = {

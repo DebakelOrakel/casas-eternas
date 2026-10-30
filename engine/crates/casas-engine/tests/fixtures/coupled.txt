@@ -1,12 +1,12 @@
 # Hashes of client/src/generator/pipeline/coupledEpoch.ts, for crates/casas-engine/tests/coupled.rs.
 # Written by the TypeScript engine, recorded from this one since DEC-0049 (tests/fixture/); do not edit.
-torus 0 861f4092 e16287b6
-torus 1 2f948908 32ceeded
-torus 2 885d47d6 273970f7
-torus 3 65d6c37b f9abed4f
-torus 4 25d77944 47759283
-sphere 0 0ca2cfa6 94a596a0
-sphere 1 3261ada8 537a24a9
-sphere 2 098024bb 74161d46
-sphere 3 39275971 0d09d552
-sphere 4 ad846d95 20e4391e
+torus 0 86cab1a0 df3a8bf1
+torus 1 6b364dee 7277050b
+torus 2 7f668a75 bb6d8d37
+torus 3 7e0bed1d 355330e3
+torus 4 3039f8d1 bc458570
+sphere 0 159542fd f4113858
+sphere 1 a980895e bc79a3b6
+sphere 2 216f2efe ddb0127c
+sphere 3 d7cbfd5f c6fe7089
+sphere 4 40806545 322a4274

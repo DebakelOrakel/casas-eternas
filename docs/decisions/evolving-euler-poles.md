@@ -11,7 +11,7 @@ summary.de: Ein sich entwickelndes grobes Mantelfeld treibt die Platten (kinemat
 area: generator
 stage: building
 createdAt: 2026-07-25
-updatedAt: 2026-08-12
+updatedAt: 2026-10-29
 concepts: [generator.concept.mantle-convection, generator.concept.hotspot, generator.concept.plate-boundaries]
 related: [DEC-0002, DEC-0011]
 ---
@@ -284,3 +284,13 @@ history, 90–135 before), and the fit holds a plate's spin as if one more
 cell at rest stood one mantle spacing from its seed — small plates no
 longer spin up to 1000–8000 km/Myr at their rim. Still no force balance:
 continental plates move as fast as oceanic ones.
+
+2026-10-29 (DES-0027 entries 4 and 2): each epoch a plate's seed moves
+5 % of the way to its footprint's centroid on the mantle mesh
+(`seedRecentreRate`), so the seeds stay spread (Clark–Evans 1.2–1.4,
+12–18 plates at epoch 600 where 3–9 were left) and no plate loses its
+footprint. A continent's keel drags its plate: the fitted motion over
+1 + `keelDrag` (4) × its continental share, the flow at 28 km/Myr (was
+16). Continents move at 21–23 km/Myr, the oceans at 53–55 (epochs
+1–100, 6 seeds per shape). Still no force balance: the drag is a factor
+on the kinematic fit.

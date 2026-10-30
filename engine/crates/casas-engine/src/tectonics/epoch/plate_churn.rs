@@ -132,7 +132,7 @@ pub fn collect_events_and_apply_plate_churn(
         apply_rift(sim, rift);
     }
     if let Some(merge) = &pass.merge_event {
-        if sim.types[merge.remove_index] == PlateType::Oceanic {
+        if merge.removed_oceanic {
             let mut e = SimEvent::new(SimEventType::OceanicSubducted);
             e.plate_index = Some(merge.keep_index);
             e.x = Some(merge.x);

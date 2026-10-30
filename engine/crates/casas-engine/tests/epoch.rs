@@ -4,14 +4,17 @@
 //! (docs/decisions/rust-engine.md, fork 5). The fixture is written by
 //! `engine/scripts/epochFixture.mjs`; the snapshot is syntheticSim.mjs's
 //! (synthetic_sim/), the hash below the script's. A failure names the
-//! first epoch that differs.
+//! first epoch that differs; a change to the model that is meant records
+//! the lines it moves (`fixture`, CASAS_RECORD=1).
 
 use casas_engine::core::domain::Domain;
 use casas_engine::tectonics::plate_simulation::step_epoch;
 
+mod fixture;
 mod sim_hash;
 mod synthetic_sim;
 
+use fixture::check;
 use sim_hash::state_hash;
 use synthetic_sim::synthetic_sim;
 
@@ -38,7 +41,12 @@ fn run(name: &str, d: Domain, seed: u32) {
     for (e, want) in expected.iter().enumerate().skip(1) {
         let events = step_epoch(&mut sim);
         let got = format!("{name} {e} {}", state_hash(&sim, &events));
-        assert_eq!(&got, want, "{name}: epoch {e} is the first that differs");
+        check(
+            "epoch.txt",
+            &got,
+            want,
+            &format!("{name}: epoch {e} is the first that differs"),
+        );
     }
 }
 

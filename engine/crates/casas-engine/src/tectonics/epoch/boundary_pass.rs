@@ -341,10 +341,35 @@ pub fn run_boundary_pass(sim: &mut PlateSimulation) -> BoundaryPassResult {
             &sim.motions[pb],
             &domain,
         );
+        // The crust beside the point on each side, crustSideM into it, and
+        // the plate that carries it. The relief, the events and the lattice's
+        // accumulation all read this (TEG-72; DES-0027 entry 27, 2026-10-29),
+        // not the type of the crust under a plate's seed.
+        let o = domain.delta(seed_a.x, seed_a.y, seed_b.x, seed_b.y);
+        let o = domain.transport(o.x, o.y, seed_b.x, seed_b.y, boundary.x, boundary.y);
+        let (nx, ny) = unit(o.x, o.y);
+        let side = |sx: f64| {
+            let p = domain.advance(
+                boundary.x,
+                boundary.y,
+                sx * nx * crust_side,
+                sx * ny * crust_side,
+            );
+            let crust = if raft_field_indexed(p.x, p.y, &carrier_blobs) > 0.5 {
+                PlateType::Continental
+            } else {
+                PlateType::Oceanic
+            };
+            let carrier =
+                carrier_plate_at(p.x, p.y, &carrier_blobs, &raft_hosts, &sim.seeds, &domain);
+            (crust, carrier)
+        };
+        let (crust_a, carrier_a) = side(1.0);
+        let (crust_b, carrier_b) = side(-1.0);
         let classification = classify_boundary(
-            sim.types[pa],
+            crust_a,
             sim.ages[pa],
-            sim.types[pb],
+            crust_b,
             sim.ages[pb],
             convergence.motion_class,
         );
@@ -363,29 +388,6 @@ pub fn run_boundary_pass(sim: &mut PlateSimulation) -> BoundaryPassResult {
             as f32;
 
         if classification.elevation_sign != 0 {
-            let o = domain.delta(seed_a.x, seed_a.y, seed_b.x, seed_b.y);
-            let o = domain.transport(o.x, o.y, seed_b.x, seed_b.y, boundary.x, boundary.y);
-            let (nx, ny) = unit(o.x, o.y);
-            // The crust beside the point on each side, crustSideM into it,
-            // and the plate that carries it.
-            let side = |sx: f64| {
-                let p = domain.advance(
-                    boundary.x,
-                    boundary.y,
-                    sx * nx * crust_side,
-                    sx * ny * crust_side,
-                );
-                let crust = if raft_field_indexed(p.x, p.y, &carrier_blobs) > 0.5 {
-                    PlateType::Continental
-                } else {
-                    PlateType::Oceanic
-                };
-                let carrier =
-                    carrier_plate_at(p.x, p.y, &carrier_blobs, &raft_hosts, &sim.seeds, &domain);
-                (crust, carrier)
-            };
-            let (crust_a, carrier_a) = side(1.0);
-            let (crust_b, carrier_b) = side(-1.0);
             let continental =
                 crust_a == PlateType::Continental || crust_b == PlateType::Continental;
             let intraplate = if convergence.motion_class == BoundaryMotionClass::Convergent {
@@ -401,13 +403,7 @@ pub fn run_boundary_pass(sim: &mut PlateSimulation) -> BoundaryPassResult {
                 1.0
             };
             if deformation > 0.0 {
-                let relief = classify_boundary(
-                    crust_a,
-                    sim.ages[pa],
-                    crust_b,
-                    sim.ages[pb],
-                    convergence.motion_class,
-                );
+                let relief = &classification;
                 let age_multiplier = T.age_multiplier_floor
                     + T.age_multiplier_range
                         * det_pow(
@@ -435,7 +431,7 @@ pub fn run_boundary_pass(sim: &mut PlateSimulation) -> BoundaryPassResult {
                     boundary.y,
                     pa,
                     pb,
-                    &relief,
+                    relief,
                     amount,
                     nx,
                     ny,
@@ -446,18 +442,12 @@ pub fn run_boundary_pass(sim: &mut PlateSimulation) -> BoundaryPassResult {
             if classification.character == BoundaryCharacter::SubductionArc
                 && sim.epoch % T.accretion_epoch_interval == 0.0
             {
-                let continental_seed = if classification.uplift_side == UpliftSide::A {
-                    seed_a
+                // Inset into the continental side, along the boundary's normal.
+                let (ix, iy) = if classification.uplift_side == UpliftSide::A {
+                    (nx, ny)
                 } else {
-                    seed_b
+                    (-nx, -ny)
                 };
-                let o = domain.delta(
-                    continental_seed.x,
-                    continental_seed.y,
-                    boundary.x,
-                    boundary.y,
-                );
-                let (ix, iy) = unit(o.x, o.y);
                 let unit_m = domain.metres_per_unit;
                 let inset = T.accretion_inset_m / unit_m;
                 let min_gap = T.accretion_min_gap_m / unit_m;
@@ -511,16 +501,19 @@ pub fn run_boundary_pass(sim: &mut PlateSimulation) -> BoundaryPassResult {
             && sim.seeds.len() > T.min_plate_count
             && accumulated >= effective_merge
         {
+            // The removed plate's side is oceanic unless both are continental.
+            let removed_oceanic = classification.character != BoundaryCharacter::FoldMountains;
             let make = |keep, remove| MergeEvent {
                 x: boundary.x,
                 y: boundary.y,
                 keep_index: keep,
                 remove_index: remove,
+                removed_oceanic,
             };
             merge_event = match classification.character {
                 BoundaryCharacter::FoldMountains => Some(make(pa.min(pb), pa.max(pb))),
                 BoundaryCharacter::SubductionArc => {
-                    let a_oceanic = sim.types[pa] == PlateType::Oceanic;
+                    let a_oceanic = crust_a == PlateType::Oceanic;
                     Some(if a_oceanic {
                         make(pb, pa)
                     } else {

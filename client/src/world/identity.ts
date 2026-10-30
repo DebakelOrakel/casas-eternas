@@ -262,6 +262,13 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // HISTORY_DEFAULTS.remeshCoarseLand) — the worlds change: a recipe
 // replays to other terrain, so v15 no longer makes v14's worlds
 // (worldPipeline.ts SAME_WORLDS_AS).
+// And, unreleased: the plates (DES-0027 entries 4, 2 and 27, 2026-10-29)
+// — each seed moves toward its footprint's centre, a continent's keel
+// drags its plate and the mantle's flow is faster (TECTONICS_TUNING
+// seedRecentreRate, keelDrag, mantleFlowSpeedKmPerMyr), and the events
+// and the history's trench read the crust beside a boundary, not the crust
+// under a plate's seed. The worlds change again: a recipe replays to other
+// terrain.
 export const AMPLIFICATION_ALGO_VERSION = 15
 
 // The constants the bake's output actually depends on. Passed in by the
