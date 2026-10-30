@@ -31,6 +31,10 @@
 //!    6 carried goods on few of them. A village draws the goods by its
 //!    size (2026-10-28, `draw_of`): what comes to it over a link is
 //!    weighed by its town over the towns' median.
+//! 4. WHERE THE GOODS CAME FROM (2026-10-30, `Goods`): each village's
+//!    share of each source's goods, as the links weigh it, for step 3 of
+//!    the prehistory (DES-0032, the exchange). The history keeps it in H1
+//!    (pack.rs); the settlement's pack does not.
 
 use crate::habitat::{ARABLE, CARRYING, FISH, Habitat, PASTURE};
 use crate::log::LogEvent;
@@ -246,6 +250,24 @@ pub struct Settled {
     pub sources: Vec<i32>,
     pub links: Vec<f32>,
     pub trade: Option<LogEvent>,
+    pub goods: Goods,
+}
+
+/// WHERE THE GOODS CAME FROM (the module's head, 4). By source (the
+/// settlement's `sources`, in their order): `sources` [cell, good,
+/// village], the village its goods leave from (-1 where none is within
+/// SOURCE_DAYS: its goods go nowhere). By village, as CSR: `start` (one
+/// more than the villages) the start of each one's rows; `source` the
+/// source's index, `share` what the village drew of its goods, the weight
+/// that source gave the link the goods came in by (the links' weights are
+/// these shares summed by link). A village's rows are in the sources'
+/// order. The source's own village has no row of its own source.
+#[derive(Default)]
+pub struct Goods {
+    pub sources: Vec<i32>,
+    pub start: Vec<i32>,
+    pub source: Vec<i32>,
+    pub share: Vec<f32>,
 }
 
 /// How much a village draws of the goods that come to it (THE DRAW): its
@@ -387,6 +409,9 @@ pub fn settle_history(
         .map(|v| draw_of(village_town.get(v).map_or(0.0, |&x| x as f64), town_median))
         .collect();
     let mut weight = vec![0f64; edges.len()];
+    // WHERE THE GOODS CAME FROM: [village, source, share] as they come.
+    let mut source_village: Vec<i32> = Vec::with_capacity(sources.len() / 2);
+    let mut received: Vec<(usize, usize, f64)> = Vec::new();
     let mut s = 0;
     while s < sources.len() {
         let mut start: Option<usize> = None;
@@ -409,7 +434,9 @@ pub fn settle_history(
             None,
         );
         reset(&mut dist, &touched);
+        let source = s / 2;
         s += 2;
+        source_village.push(start.map_or(-1, |v| v as i32));
         let Some(start) = start else { continue };
         // The goods down the line, less the more days from the source's
         // village (DECAY_DAYS), as far as MAX_DAYS; each link weighs what
@@ -434,11 +461,14 @@ pub fn settle_history(
                 days.insert(u, nd);
                 heap.push(nd, u as i32);
                 if first {
-                    weight[k] += det_exp(-d / DECAY_DAYS) * draw[u];
+                    let share = det_exp(-d / DECAY_DAYS) * draw[u];
+                    weight[k] += share;
+                    received.push((u, source, share));
                 }
             }
         }
     }
+    let goods = goods_by_village(&sources, &source_village, &received, count);
     let mut links: Vec<f32> = Vec::with_capacity(3 * edges.len());
     for (k, &(a, b)) in edges.iter().enumerate() {
         links.extend([a as f32, b as f32, weight[k] as f32]);
@@ -484,5 +514,42 @@ pub fn settle_history(
         sources,
         links,
         trade,
+        goods,
+    }
+}
+
+/// The goods by village (`Goods`), from the sources [cell, good], the
+/// village each one's goods leave from, and [village, source, share] in
+/// the sources' order.
+fn goods_by_village(
+    sources: &[i32],
+    source_village: &[i32],
+    received: &[(usize, usize, f64)],
+    count: usize,
+) -> Goods {
+    let mut start = vec![0i32; count + 1];
+    for &(v, _, _) in received {
+        start[v + 1] += 1;
+    }
+    for v in 0..count {
+        start[v + 1] += start[v];
+    }
+    let mut at: Vec<usize> = start[..count].iter().map(|&x| x as usize).collect();
+    let mut source = vec![0i32; received.len()];
+    let mut share = vec![0f32; received.len()];
+    for &(v, s, w) in received {
+        source[at[v]] = s as i32;
+        share[at[v]] = w as f32;
+        at[v] += 1;
+    }
+    Goods {
+        sources: sources
+            .chunks(2)
+            .zip(source_village)
+            .flat_map(|(cg, &v)| [cg[0], cg[1], v])
+            .collect(),
+        start,
+        source,
+        share,
     }
 }

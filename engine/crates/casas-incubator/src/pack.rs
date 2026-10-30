@@ -36,6 +36,13 @@
 //!   `peopleFrame` u16 (the kept state), `peoplePeople` f32,
 //!   `peopleKm2` f32, `peopleFarmers` u8 (the share in 255ths),
 //!   `peopleCentre` i32 (its heart's cell).
+//!
+//! WHERE THE GOODS CAME FROM (since v6, 2026-10-30; settle.rs `Goods`),
+//! after the peoples, which keep their bytes: `goodsSources` i32, by
+//! source [cell, good (settle.rs GOODS' index), village its goods leave
+//! from, -1 for none]; by village (of `villages`), as CSR: `goodsStart`
+//! i32, one more than the villages; `goodsSource` i32 (the source's index)
+//! and `goodsShare` f32 (what the village drew of its goods).
 
 use crate::log::Json;
 use crate::simulation::SimulationResult;
@@ -221,6 +228,12 @@ pub fn pack_history(r: &SimulationResult) -> Vec<u8> {
         }
     }
     push_peoples(r, &reached, &mut arrays);
+    arrays.extend([
+        ("goodsSources".into(), Array::I32(&r.goods.sources)),
+        ("goodsStart".into(), Array::I32(&r.goods.start)),
+        ("goodsSource".into(), Array::I32(&r.goods.source)),
+        ("goodsShare".into(), Array::F32(&r.goods.share)),
+    ]);
     pack(
         |j| {
             j.open_object();

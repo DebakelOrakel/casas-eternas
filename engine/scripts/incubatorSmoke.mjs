@@ -5,7 +5,8 @@
 // 2 048: at 8 km some 40 000 cells), with continents and islands, ice, the
 // climates' belts, rivers, the ecology's fields, the rain's reliability:
 // the habitat, the flora, the fauna, the history (its packed bytes), its
-// peoples (their arrays in the pack, since the incubator's v3) and its
+// peoples (their arrays in the pack, since the incubator's v3), where its
+// goods came from (their arrays in the pack, since 2026-10-30) and its
 // settlement, hashed, must be the reference's. The reference was recorded
 // while the TypeScript the crate was ported from still stood beside it and
 // gave the same bits (2026-10-27; and on Morvane, the whole H1 alike); it
@@ -184,6 +185,29 @@ const hashOf = (...parts) => {
   for (const p of parts) digest.update(ArrayBuffer.isView(p) ? bytesOf(p) : p)
   return digest.digest('hex')
 }
+// WHERE THE GOODS CAME FROM (the pack's last arrays since the incubator's
+// v6, 2026-10-30; pack.rs): hashed apart, and the history's hash is that
+// of the pack without them, the bytes it had before them. So the goods
+// cannot change the rest of the history unseen.
+const pad8 = (n) => (n + 7) & ~7
+function goodsApart(pack) {
+  const bytes = bytesOf(pack)
+  const length = bytes.readUInt32LE(0)
+  const head = bytes.subarray(4, 4 + length).toString('utf8')
+  const arrays = JSON.parse(head).arrays
+  const goods = arrays.filter((a) => a.name.startsWith('goods'))
+  const end = Math.min(...goods.map((a) => a.offset))
+  if (goods.length !== 4 || arrays.some((a) => !a.name.startsWith('goods') && a.offset >= end)) throw new Error('the goods are not the pack\'s last arrays')
+  const rest = Buffer.from(head.replace(/,\{"name":"goods[A-Za-z]*","type":"[a-z0-9]+","offset":\d+,"length":\d+\}/g, ''), 'utf8')
+  const data = pad8(4 + length)
+  const history = Buffer.alloc(pad8(4 + rest.length) + end)
+  history.writeUInt32LE(rest.length, 0)
+  rest.copy(history, 4)
+  bytes.copy(history, pad8(4 + rest.length), data, data + end)
+  const size = { 'i32': 4, 'f32': 4 }
+  const of = Object.fromEntries(goods.map((a) => [a.name, bytes.subarray(data + a.offset, data + a.offset + a.length * size[a.type])]))
+  return { history, goods: of, bytes: bytes.length, before: history.length }
+}
 for (const kind of ['torus', 'sphere']) {
   const world = synthWorld(kind)
   let t0 = performance.now()
@@ -208,7 +232,9 @@ for (const kind of ['torus', 'sphere']) {
   t0 = performance.now()
   const pack = rs.simulate(-1, world.seed, r.width, r.height, r.variability, r.enso, r.ensoStrength, undefined)
   const runMs = performance.now() - t0
-  hashes[`${kind} history`] = hashOf(pack)
+  const apart = goodsApart(pack)
+  hashes[`${kind} history`] = hashOf(apart.history)
+  hashes[`${kind} goods`] = hashOf(...Object.values(apart.goods))
   const history = unpackHistory(pack.buffer.slice(pack.byteOffset, pack.byteOffset + pack.byteLength))
   if (!history) {
     fail(`${kind} history: its pack does not read`)
@@ -230,6 +256,16 @@ for (const kind of ['torus', 'sphere']) {
   hashes[`${kind} settlement`] = hashOf(settledPack)
   const settled = unpackSettled(settledPack.buffer.slice(settledPack.byteOffset, settledPack.byteOffset + settledPack.byteLength))
   if (settled?.trade) seen.add('trade')
+  // The goods' shares are the links' weights, by source and village:
+  // their sums are one.
+  const shares = new Float32Array(apart.goods.goodsShare.buffer.slice(apart.goods.goodsShare.byteOffset, apart.goods.goodsShare.byteOffset + apart.goods.goodsShare.byteLength))
+  const sharesSum = shares.reduce((a, x) => a + x, 0)
+  const links = settled?.arrays.get('links') ?? new Float32Array(0)
+  let linksSum = 0
+  for (let k = 2; k < links.length; k += 3) linksSum += links[k]
+  if (Math.abs(sharesSum - linksSum) > 1e-4 * Math.max(1, linksSum)) fail(`${kind} goods: their shares sum to ${sharesSum}, the links' weights to ${linksSum}`)
+  if (shares.length > 0) seen.add('goods')
+  console.log(`incubator: ${kind} — H1 ${apart.bytes} bytes, ${apart.before} without the goods (+${(100 * (apart.bytes - apart.before) / apart.before).toFixed(2)} %): ${apart.goods.goodsSources.length / 12} sources, ${shares.length} shares`)
   // What the world reached, for `reaches`.
   for (const e of history.log) seen.add(e.kind === 'centre' ? `centre ${e.lifeway}` : e.kind)
   // The ice: a cell lived in, left (its people gone in a kept state), lived
@@ -261,13 +297,14 @@ for (const kind of ['torus', 'sphere']) {
     habitat: hashOf(nat.owners(), ...['areaKm2', 'heightM', 'slope', 'seaDepthM', 'riverSize', 'distKm', 'u', 'v'].map((name) => nat.floats(name)), ...CELL_ECOLOGY.map((id) => nat.floats(`eco:${id}`)), ...['land', 'biome', 'koppen', 'nearRiver', 'nearLake', 'nearSea'].map((name) => nat.bytes(name)), ...['landmass', 'nbrStart', 'nbr'].map((name) => nat.ints(name)), nat.landmassKm2(), nat.scalars(), nat.iceKm(), native.coldCurve(world.seed)),
     flora: hashOf(nat.floraCodes(), nat.floraShares()),
     fauna: hashOf(nat.faunaCodes(), nat.faunaShares()),
-    history: hashOf(natPack),
+    history: hashOf(goodsApart(natPack).history),
+    goods: hashOf(...Object.values(goodsApart(natPack).goods)),
     peoples: peoplesHash(unpackHistory(natPack.buffer.slice(natPack.byteOffset, natPack.byteOffset + natPack.byteLength))),
     settlement: hashOf(natSettled),
   }
   for (const [part, h] of Object.entries(natHashes)) if (h !== hashes[`${kind} ${part}`]) fail(`${kind} ${part}: the native build differs from the WASM's`)
   console.log(`incubator: ${kind} — the native build in ${Math.round(natMs)} ms`)
-  if (golden) for (const part of ['habitat', 'flora', 'fauna', 'history', 'peoples', 'settlement']) {
+  if (golden) for (const part of ['habitat', 'flora', 'fauna', 'history', 'peoples', 'settlement', 'goods']) {
     const key = `${kind} ${part}`
     if (golden[key] !== hashes[key]) fail(`${key}: not the reference's (${hashes[key].slice(0, 12)} against ${String(golden[key]).slice(0, 12)})`)
   }
@@ -298,7 +335,7 @@ for (const kind of ['torus', 'sphere']) {
 // (2026-10-30, TEG-99). Also in peoples.rs
 // `a_split_is_told_once_it_held` and
 // `the_tree_keeps_ids_and_records_splits_and_merges`.
-const reaches = ['departure', 'trade', 'crossing', 'centre 3', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleSplit', 'peopleMerged', 'peopleGone', 'peopleFarmers']
+const reaches = ['departure', 'trade', 'crossing', 'centre 3', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleSplit', 'peopleMerged', 'peopleGone', 'peopleFarmers', 'goods']
 for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
 if (!golden && !failed) {
   await writeFile(GOLDEN, JSON.stringify(hashes, null, 2) + '\n')

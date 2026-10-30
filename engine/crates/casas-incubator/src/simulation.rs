@@ -53,6 +53,7 @@ use crate::habitat::{ARABLE, COPPER, FISH, Habitat, PASTURE, km_between, latitud
 use crate::log::{LogEvent, POPULATION_MARKS};
 use crate::peoples::{Traits, Tree};
 use crate::peopling::Peopling;
+use crate::settle::{Goods, settle_history};
 use crate::travel::{reset, travel_days, within_days};
 use casas_engine::climate::biomes::biome;
 use casas_engine::core::det_math::{det_cos, det_exp, det_log};
@@ -595,6 +596,10 @@ pub struct SimulationResult {
     /// (peoples.rs).
     pub replaced: u32,
     pub splits: u32,
+    /// WHERE THE GOODS CAME FROM (settle.rs `Goods`): the far trade's
+    /// sources and each village's share of each one's goods, at the end.
+    /// Packed since 2026-10-30 (v6), after the peoples.
+    pub goods: Goods,
 }
 
 /// Each cell's distance from today's glaciers over the cold climates, km
@@ -3026,7 +3031,7 @@ pub fn simulate(
     }
     tree.finish(&mut sim.log);
     population.truncate(((end - t0) / POPULATION_STEP) as usize + 1);
-    SimulationResult {
+    let mut result = SimulationResult {
         arrival: sim.arrival,
         land: land.clone(),
         from: sim.from,
@@ -3070,5 +3075,21 @@ pub fn simulate(
         traits: sim.traits.values,
         trait_frames,
         tree,
-    }
+        goods: Goods::default(),
+    };
+    // WHERE THE GOODS CAME FROM: the settlement of the history, as the
+    // client computes it from H1 (settle.rs), its goods alone kept.
+    result.goods = settle_history(
+        h,
+        &result.arrival,
+        &result.farm_at,
+        &result.herd_at,
+        &result.villages,
+        &result.village_from,
+        &result.village_to,
+        &result.village_town,
+        end,
+    )
+    .goods;
+    result
 }

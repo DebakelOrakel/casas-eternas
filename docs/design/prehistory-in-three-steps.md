@@ -234,7 +234,13 @@ constants in simulation.rs.
   along the coast, never over the open sea. Step 3 reads where which goods
   came from. Organised far trade (traders, caravans, ships, the tin) is
   step 3's. Built 2026-10-28: the fall-off and the large villages' draw
-  (settle.rs); where which goods came from is not kept yet.
+  (settle.rs). Built 2026-10-30: where which goods came from, in H1
+  (settle.rs `Goods`, pack.rs): each source of the far trade (its cell,
+  its good — tool stone, salt or copper — and the village its goods
+  leave from) and, by village, its share of each source's goods, as the
+  links weigh them. The landmass of a source is that of its cell. Like
+  the links, it is the trade of the history's end, over all its villages
+  and camps.
 - **The climate's events, in this order:** (1) the rising sea drowns
   cells, their people go to the neighbours, and a large loss is told in
   the chronicle (a coast goes under, as Doggerland) — built 2026-10-28;
@@ -618,6 +624,14 @@ Building since 2026-10-27:
   Morvane 0/0/0/20 → 0/0/0/32, Thalassor 0/0/2/21 → 0/0/1/26, Zephyra
   23/1/0/17 → 15/0/0/22. All other arrays and events keep their bytes;
   Morvane's history 2.6 → 3.0 s.
+- 2026-10-30: where the far trade's goods came from, in H1 (the
+  incubator's v6, unreleased: four arrays after the peoples; settle.rs
+  `Goods`). The history runs the settlement once more at its end and
+  keeps the goods alone; the settlement's pack stays as it was. All
+  other arrays and events keep their bytes (incubatorSmoke: the history
+  without the goods, the peoples and the settlement are the reference's).
+  The smoke test's worlds: the torus 13 sources, 232 shares, H1 +0.12 %;
+  the sphere 22 sources, 1 768 shares, +0.44 %.
 
 Open:
 
@@ -637,8 +651,8 @@ Open:
    years and not come in step 2's first 5 000 years (1, 1, 6 on the
    three worlds); a lower share of the land lived in to tell
    (SPLIT_TOLD_SHARE) would tell more (2026-10-29).
-3. The far trade: where which goods came from, for step 3 (above, the
-   exchange).
+3. Done 2026-10-30: the far trade's sources of the goods in H1, for
+   step 3 (above, the exchange; Status).
 4. Step 1's sea-level curve: drawn from the world's seed, or a control.
 5. The dry shelf's own land fields (planned for v15, 2026-10-30):
    the engine's ecology with the shelf down to −120 m as land, in today's

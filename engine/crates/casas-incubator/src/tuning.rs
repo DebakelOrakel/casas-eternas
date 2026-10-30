@@ -42,7 +42,9 @@ use serde_json::{Map, Value, json};
 /// their km a year (simulation.rs THE FRONTS' TIMES, 2026-10-29: one cell
 /// a step before); the peoples without the stripes again (peoples.rs
 /// `Traits::decide`, `kin_of`, 2026-10-29: the nearest farmer heart, and
-/// the fields around), the other arrays and events the same bytes.
+/// the fields around), the other arrays and events the same bytes; where
+/// the far trade's goods came from (settle.rs `Goods`, 2026-10-30), four
+/// arrays after the peoples, the other arrays the same bytes.
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
