@@ -5,6 +5,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 
 ## 2026-10-30
 - **new** Ecology: large rivers that flood each year make their floodplains arable, also in a desert. `resource.arable`
+- **fixed** Tectonics: the mesh of a flat world places each new node at the position that it stores, so a seed makes a slightly different flat world. `generator.step.tectonics`
 - **fixed** Tectonics: lake floors no longer erode under the water, so a seed makes a different world. `generator.step.tectonics`
 - **fixed** Tectonics: basins below the sea that the ocean does not reach fill up with sediment like lakes, so a seed makes a different world. `generator.step.tectonics`
 - **changed** Tectonics: the land stands at about the same height on flat and sphere worlds and rises less over a long history, so a seed makes a different world. `generator.step.tectonics`

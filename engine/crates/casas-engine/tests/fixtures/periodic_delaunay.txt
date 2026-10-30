@@ -1,13 +1,13 @@
 # Hashes of client/src/generator/mesh/periodicDelaunay.ts, for crates/casas-engine/tests/periodic_delaunay.rs.
-# Written by engine/scripts/delaunayFixture.mjs; do not edit.
+# Written by engine/scripts/delaunayFixture.mjs, recorded from this engine since TEG-115 (tests/fixture/); do not edit.
 torus bootstrap 0c265902
-torus insert 3dd93dff
-torus remove 2944621f 5248
-torus special 5c6978af
-torus reinsert 5ea76fb8
-torus clone 122471cc
-torus query 48405c68
-torus area 530d4e08
+torus insert 0b1833e2
+torus remove d03cb732 5248
+torus special bd240723
+torus reinsert 71964c85
+torus clone 9dcfe565
+torus query df74157b
+torus area f395673f
 sphere bootstrap 9877e221
 sphere insert 9ee6ece9
 sphere remove cdd23fc9 5214

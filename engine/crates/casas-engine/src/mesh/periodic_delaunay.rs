@@ -793,6 +793,20 @@ impl PeriodicTriangulation {
 
     // -------------------------------------------------------------- capacity
 
+    /// The position a vertex stores for the point (x, y): wrapped and
+    /// rounded to float32, as the save holds it. On the globe, the chart
+    /// point.
+    fn stored_point(&self, x: f64, y: f64) -> (f64, f64) {
+        if self.globe {
+            return self.chart_point(x, y);
+        }
+        (
+            self.domain.wrap_x(js::fround(self.domain.wrap_x(x))),
+            self.domain.wrap_y(js::fround(self.domain.wrap_y(y))),
+        )
+    }
+
+    /// A new vertex at (x, y), a position from `stored_point`.
     fn new_vertex(&mut self, x: f64, y: f64) -> usize {
         let v = match self.free_vertices.pop() {
             Some(v) => v as usize,
@@ -807,15 +821,11 @@ impl PeriodicTriangulation {
                 self.vx.len() - 1
             }
         };
+        self.vx[v] = x;
+        self.vy[v] = y;
         if self.globe {
-            let (cx, cy) = self.chart_point(x, y);
-            self.vx[v] = cx;
-            self.vy[v] = cy;
-            let u = self.unit_of(cx, cy);
+            let u = self.unit_of(x, y);
             self.vu[3 * v..3 * v + 3].copy_from_slice(&u);
-        } else {
-            self.vx[v] = self.domain.wrap_x(js::fround(self.domain.wrap_x(x)));
-            self.vy[v] = self.domain.wrap_y(js::fround(self.domain.wrap_y(y)));
         }
         self.v_alive[v] = 1;
         self.alive_vertices += 1;
@@ -866,12 +876,16 @@ impl PeriodicTriangulation {
 
     // ------------------------------------------------------------- insertion
 
-    /// Inserts a point and returns its vertex id. A point coinciding with an
-    /// existing vertex returns that vertex and inserts nothing.
-    pub fn insert(&mut self, mut x: f64, mut y: f64, hint: Option<usize>) -> usize {
-        if self.globe {
-            (x, y) = self.chart_point(x, y);
-        }
+    /// Inserts a point and returns its vertex id. The point is first
+    /// rounded to the position that a vertex stores (`stored_point`), and
+    /// the location and the split use that position: the triangulation is
+    /// of the stored positions. A point at the position of an existing
+    /// vertex (or nearer to it than the location tolerance) returns that
+    /// vertex and inserts nothing. Thus two points nearer to each other
+    /// than float32 resolution give one vertex, not two vertices at one
+    /// position (TEG-115).
+    pub fn insert(&mut self, x: f64, y: f64, hint: Option<usize>) -> usize {
+        let (x, y) = self.stored_point(x, y);
         let t = self.locate(x, y, hint);
         if self.at_vertex >= 0 {
             return self.t(3 * t + self.at_vertex as usize);

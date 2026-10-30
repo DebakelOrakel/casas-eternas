@@ -480,8 +480,8 @@ fn cocircular(band: &mut Band) -> PeriodicTriangulation {
 }
 
 /// Duplicates and near-duplicates: every lattice vertex again, then at
-/// offsets within the location tolerance (for offsets above it, see the
-/// ignored test at the end).
+/// offsets within the location tolerance (for offsets above it, but within
+/// float32 resolution, see the last test).
 fn duplicates(band: &mut Band) -> PeriodicTriangulation {
     let mut m = square_lattice(S18, 32, 16);
     let before = m.alive_vertices;
@@ -721,26 +721,27 @@ fn globe_rings_and_meridians_reach_the_in_circle_and_ear_tolerances() {
     assert!(band.ear > 0, "{band:?}");
 }
 
-/// DEFECT (TEG-101), not fixed here: `insert` locates the float64 point but
-/// stores its float32 value. A point nearer a vertex than float32
+/// TEG-115: `insert` rounds the point to the float32 position that a
+/// vertex stores before it locates it. A point nearer a vertex than float32
 /// resolution, but farther than the location tolerance (ON_EDGE_EPS · edge,
-/// about 3e-9 here), is not taken as that vertex; its stored value then is
-/// the vertex's position. The result is a second vertex at the same
-/// position and two triangles that are not counter-clockwise. At the seam,
+/// about 3e-9 here), has the vertex's position and thus is that vertex: the
+/// insert returns it and adds nothing. Before the fix, the point was located
+/// as float64 and stored as float32, which gave a second vertex at the same
+/// position and two triangles that were not counter-clockwise. At the seam,
 /// -1e-7 wraps to the width, rounds to it in float32, and wraps to 0 again.
 #[test]
-#[ignore = "TEG-101: a point within float32 resolution of a vertex gives a duplicate vertex"]
-fn a_point_nearer_a_vertex_than_float32_resolution_gives_a_valid_triangulation() {
+fn a_point_nearer_a_vertex_than_float32_resolution_is_that_vertex() {
     // Lattice vertex 175 is (15 · S18, 5 · S18), about (479.99, 159.997);
     // vertex 160 is (0, 5 · S18).
-    for (x, y) in [
-        (15.0 * S18 + 1e-5, 5.0 * S18),
-        (15.0 * S18 + 1e-6, 5.0 * S18),
-        (-1e-7, 5.0 * S18),
+    for (x, y, want) in [
+        (15.0 * S18 + 1e-5, 5.0 * S18, 175),
+        (15.0 * S18 + 1e-6, 5.0 * S18, 175),
+        (-1e-7, 5.0 * S18, 160),
     ] {
         let mut m = square_lattice(S18, 32, 16);
         let v = m.insert(x, y, None);
-        assert_eq!(m.alive_vertices, 513, "({x}, {y}) is a new vertex");
+        assert_eq!(v, want, "({x}, {y}) is vertex {want}");
+        assert_eq!(m.alive_vertices, 512, "({x}, {y}) adds no vertex");
         assert_valid(&format!("({x}, {y}) as vertex {v}"), &mut m);
     }
 }

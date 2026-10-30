@@ -1,8 +1,8 @@
 # Hashes of client/src/generator/mesh/meshSampler.ts, surface/amplify.ts and mesh/meshRefine.ts, for crates/casas-engine/tests/level.rs.
-# Written by engine/scripts/levelFixture.mjs; do not edit.
+# Written by engine/scripts/levelFixture.mjs, recorded from this engine since TEG-115 (tests/fixture/); do not edit.
 amplify fa81994b
-torus_sampler 1234ee6b
+torus_sampler c22e5eb3
 torus_synthesis 4feaab5b
 sphere_sampler ea55aba5
 sphere_synthesis 4069e063
-refine e0587bd8
+refine d9db8ce5

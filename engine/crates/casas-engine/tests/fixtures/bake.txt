@@ -1,5 +1,5 @@
 # Hashes of client/src/generator/pipeline/meshBakeStage.ts, for crates/casas-engine/tests/bake.rs.
 # Written by engine/scripts/bakeFixture.mjs; do not edit.
 budget f73ba46d
-level_climate 54f7d3b6
-level_dry 9fd0e031
+level_climate 4b9aaa87
+level_dry 1a7b5219

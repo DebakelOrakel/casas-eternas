@@ -16,6 +16,9 @@ use casas_engine::surface::amplify::{
     amplify_constants, ridged_at, ridged_at_on, seed_cascade_scales, seed_roughness_amplitude,
 };
 
+mod fixture;
+
+const FILE: &str = "level.txt";
 const FIXTURE: &str = include_str!("fixtures/level.txt");
 
 struct Hash(u32);
@@ -45,7 +48,7 @@ fn check(name: &str, h: &Hash) {
         .lines()
         .find(|l| l.split_whitespace().next() == Some(name))
         .unwrap_or_else(|| panic!("no {name} in the fixture"));
-    assert_eq!(format!("{name} {:08x}", h.0), expected);
+    fixture::check(FILE, &format!("{name} {:08x}", h.0), expected, name);
 }
 
 /// The script's generator.

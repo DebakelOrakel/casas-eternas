@@ -33,6 +33,9 @@ use casas_engine::surface::sediment_basins::{
 };
 use casas_engine::surface::surface_tune_params::SURFACE_TUNING;
 
+mod fixture;
+
+const FILE: &str = "rivers.txt";
 const FIXTURE: &str = include_str!("fixtures/rivers.txt");
 
 struct Hash(u32);
@@ -122,7 +125,7 @@ impl Hash {
             .lines()
             .find(|l| l.split_whitespace().next() == Some(name))
             .unwrap_or_else(|| panic!("no {name} in the fixture"));
-        assert_eq!(format!("{name} {:08x}", self.0), want);
+        fixture::check(FILE, &format!("{name} {:08x}", self.0), want, name);
     }
 }
 

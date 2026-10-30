@@ -21,6 +21,9 @@ use casas_engine::mesh::mesh_state::{FieldKind, MeshState};
 use casas_engine::mesh::periodic_delaunay::PeriodicTriangulation;
 use casas_engine::mesh::remesh::{RefineOptions, RemeshStats, remesh};
 
+mod fixture;
+
+const FILE: &str = "mesh.txt";
 const FIXTURE: &str = include_str!("fixtures/mesh.txt");
 
 struct Gen(u32);
@@ -123,7 +126,7 @@ fn mulberry32_gives_the_typescript_draws() {
             h.add(r.next());
         }
     }
-    assert_eq!(h.line("mulberry32"), expected("mulberry32"));
+    fixture::check(FILE, &h.line("mulberry32"), &expected("mulberry32"), "mesh");
 }
 
 #[test]
@@ -145,7 +148,12 @@ fn the_hilbert_key_and_order_give_the_typescript_values() {
         let x = g.uniform(-100.0, 2148.0);
         h.add(hilbert_key(x, g.uniform(-100.0, 1124.0), 2048.0, 1024.0) as f64);
     }
-    assert_eq!(h.line("hilbert_key"), expected("hilbert_key"));
+    fixture::check(
+        FILE,
+        &h.line("hilbert_key"),
+        &expected("hilbert_key"),
+        "mesh",
+    );
     let mut xs = vec![0.0; 50000];
     let mut ys = vec![0.0; 50000];
     for i in 0..xs.len() {
@@ -154,7 +162,12 @@ fn the_hilbert_key_and_order_give_the_typescript_values() {
     }
     let mut h = Hash::new();
     h.add_all(&hilbert_order(&xs, &ys, xs.len(), 2048.0, 1024.0));
-    assert_eq!(h.line("hilbert_order"), expected("hilbert_order"));
+    fixture::check(
+        FILE,
+        &h.line("hilbert_order"),
+        &expected("hilbert_order"),
+        "mesh",
+    );
 }
 
 #[test]
@@ -185,23 +198,43 @@ fn the_density_rule_gives_the_typescript_spacing() {
             if i % 2 == 0 { 1.0 } else { 0.25 },
         ));
     }
-    assert_eq!(h.line("target_spacing"), expected("target_spacing"));
+    fixture::check(
+        FILE,
+        &h.line("target_spacing"),
+        &expected("target_spacing"),
+        "mesh",
+    );
 }
 
 #[test]
 fn the_lattices_give_the_typescript_meshes() {
     let mut h = Hash::new();
     h.mesh(&hex_lattice(&Domain::torus(2048.0, 1024.0), 40.0));
-    assert_eq!(h.line("hex_lattice"), expected("hex_lattice"));
+    fixture::check(
+        FILE,
+        &h.line("hex_lattice"),
+        &expected("hex_lattice"),
+        "mesh",
+    );
     let mut h = Hash::new();
     h.mesh(&geodesic_lattice(&Domain::sphere(2048.0, 1024.0), 30.0));
-    assert_eq!(h.line("geodesic_lattice"), expected("geodesic_lattice"));
+    fixture::check(
+        FILE,
+        &h.line("geodesic_lattice"),
+        &expected("geodesic_lattice"),
+        "mesh",
+    );
     let mut h = Hash::new();
     h.mesh(&centroidal_geodesic_lattice(
         &Domain::sphere(2048.0, 1024.0),
         60.0,
     ));
-    assert_eq!(h.line("centroidal_lattice"), expected("centroidal_lattice"));
+    fixture::check(
+        FILE,
+        &h.line("centroidal_lattice"),
+        &expected("centroidal_lattice"),
+        "mesh",
+    );
 }
 
 const BUDGET: f64 = 16.0;
@@ -212,9 +245,11 @@ fn build_remesh(name: &str, domain: Domain) {
     h.mesh(&built.mesh);
     h.state(&built.mesh, &built.state);
     h.stats(&built.stats);
-    assert_eq!(
-        h.line(&format!("{name}_build")),
-        expected(&format!("{name}_build"))
+    fixture::check(
+        FILE,
+        &h.line(&format!("{name}_build")),
+        &expected(&format!("{name}_build")),
+        "mesh",
     );
 
     let mut g = Gen(3);
@@ -232,9 +267,11 @@ fn build_remesh(name: &str, domain: Domain) {
     let mut h = Hash::new();
     h.mesh(&mesh);
     h.add_all(&mapping);
-    assert_eq!(
-        h.line(&format!("{name}_triangulate")),
-        expected(&format!("{name}_triangulate"))
+    fixture::check(
+        FILE,
+        &h.line(&format!("{name}_triangulate")),
+        &expected(&format!("{name}_triangulate")),
+        "mesh",
     );
 
     let mut s = MeshState::new(mesh.vertex_slots());
@@ -274,9 +311,11 @@ fn build_remesh(name: &str, domain: Domain) {
     h.mesh(&mesh);
     h.state(&mesh, &s);
     h.stats(&stats);
-    assert_eq!(
-        h.line(&format!("{name}_remesh")),
-        expected(&format!("{name}_remesh"))
+    fixture::check(
+        FILE,
+        &h.line(&format!("{name}_remesh")),
+        &expected(&format!("{name}_remesh")),
+        "mesh",
     );
     let errors = mesh.validate(true);
     assert!(
@@ -295,9 +334,11 @@ fn build_remesh(name: &str, domain: Domain) {
     h.add_all(&geo.cells.star);
     h.add_all(&geo.length_m);
     h.add_all(&geo.wall_m);
-    assert_eq!(
-        h.line(&format!("{name}_geometry")),
-        expected(&format!("{name}_geometry"))
+    fixture::check(
+        FILE,
+        &h.line(&format!("{name}_geometry")),
+        &expected(&format!("{name}_geometry")),
+        "mesh",
     );
     let mut g = Gen(4);
     let centre: Vec<u8> = (0..mesh.vertex_slots())
@@ -316,9 +357,11 @@ fn build_remesh(name: &str, domain: Domain) {
         h.add_all(&nb::max_within(&geo.cells, &mesh, radius, admit, &z));
         h.add_all(&nb::mean_within(&geo.cells, &mesh, radius, admit, &z));
     }
-    assert_eq!(
-        h.line(&format!("{name}_neighbourhoods")),
-        expected(&format!("{name}_neighbourhoods"))
+    fixture::check(
+        FILE,
+        &h.line(&format!("{name}_neighbourhoods")),
+        &expected(&format!("{name}_neighbourhoods")),
+        "mesh",
     );
     let mut h = Hash::new();
     for _ in 0..2000 {
@@ -356,9 +399,11 @@ fn build_remesh(name: &str, domain: Domain) {
     ));
     h.add(mesh.last_tri as f64);
     h.add(mesh.walk_steps as f64);
-    assert_eq!(
-        h.line(&format!("{name}_around")),
-        expected(&format!("{name}_around"))
+    fixture::check(
+        FILE,
+        &h.line(&format!("{name}_around")),
+        &expected(&format!("{name}_around")),
+        "mesh",
     );
     let extra: Vec<u8> = (0..mesh.vertex_slots())
         .map(|_| u8::from(g.next().is_multiple_of(7)))
@@ -381,9 +426,11 @@ fn build_remesh(name: &str, domain: Domain) {
         h.add_all(&ix.mfd_factor);
         h.add_all(&ix.area_rel);
     }
-    assert_eq!(
-        h.line(&format!("{name}_engine_index")),
-        expected(&format!("{name}_engine_index"))
+    fixture::check(
+        FILE,
+        &h.line(&format!("{name}_engine_index")),
+        &expected(&format!("{name}_engine_index")),
+        "mesh",
     );
 }
 

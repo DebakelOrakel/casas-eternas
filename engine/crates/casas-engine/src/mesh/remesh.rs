@@ -160,7 +160,15 @@ pub fn refine(
             }
             let (ta, tb, tc) = corners;
             let bary = mesh.barycentric(t, px, py);
+            let alive = mesh.alive_vertices;
             let v = mesh.insert(px, py, Some(t));
+            if mesh.alive_vertices == alive {
+                // The point's float32 position is a vertex's position: the
+                // insert returned that vertex and added nothing (TEG-115).
+                // `too_close` refuses such a point first, but a target near
+                // zero can let one through; that vertex keeps its state.
+                continue;
+            }
             state.ensure(mesh);
             grow(&mut targets, mesh.vertex_slots());
             state.inherit_insert(v, ta, tb, tc, bary[0], bary[1], bary[2]);

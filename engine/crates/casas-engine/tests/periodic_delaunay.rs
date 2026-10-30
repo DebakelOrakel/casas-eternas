@@ -7,6 +7,9 @@
 use casas_engine::core::domain::Domain;
 use casas_engine::mesh::periodic_delaunay::PeriodicTriangulation;
 
+mod fixture;
+
+const FILE: &str = "periodic_delaunay.txt";
 const FIXTURE: &str = include_str!("fixtures/periodic_delaunay.txt");
 
 struct Gen(u32);
@@ -205,19 +208,25 @@ fn expected(name: &str) -> Vec<String> {
         .collect()
 }
 
+/// Checks each line of the scenario against the fixture's line, in order.
+fn check(name: &str, got: Vec<String>) {
+    let want = expected(name);
+    assert_eq!(got.len(), want.len(), "{name}: the number of lines");
+    for (g, w) in got.iter().zip(&want) {
+        fixture::check(FILE, g, w, name);
+    }
+}
+
 #[test]
 fn the_torus_scenario_gives_the_typescript_state() {
-    assert_eq!(
-        scenario("torus", Domain::torus(2048.0, 1024.0), 1),
-        expected("torus")
-    );
+    check("torus", scenario("torus", Domain::torus(2048.0, 1024.0), 1));
 }
 
 #[test]
 fn the_sphere_scenario_gives_the_typescript_state() {
-    assert_eq!(
+    check(
+        "sphere",
         scenario("sphere", Domain::sphere(2048.0, 1024.0), 2),
-        expected("sphere")
     );
 }
 

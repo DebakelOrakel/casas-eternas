@@ -1,9 +1,9 @@
 # Hashes of client/src/generator/pipeline/replayRuns.ts, for crates/casas-engine/tests/replay.rs.
 # Written by the TypeScript engine, recorded from this one since DEC-0049 (tests/fixture/); do not edit.
-torus checkpoint 0 3 dc5333dc
-torus checkpoint 1 0 504889e2
-torus full 64247fcf 41b9d681
-torus resumed 1 0 64247fcf 41b9d681
+torus checkpoint 0 3 1a37c552
+torus checkpoint 1 0 0dbb3c21
+torus full 0dc910a6 41b9d681
+torus resumed 1 0 0dc910a6 41b9d681
 sphere checkpoint 0 3 774ddc1c
 sphere checkpoint 1 0 b830c81b
 sphere full 2b5f7bec 12401a6e

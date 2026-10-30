@@ -1,11 +1,11 @@
 # Hashes of client/src/generator/surface/riverGraph.ts, surface/hydrogeology.ts and surface/riverCourse.ts, for crates/casas-engine/tests/rivers.rs.
-# Written by engine/scripts/riversFixture.mjs; do not edit.
-torus_graph 831d39ad
-torus_ground 9453d93a
-torus_courses dd4e5e85
-torus_ribbons c2fe204d
-torus_basins 8b94d55b
-torus_coast 384a31ad
+# Written by engine/scripts/riversFixture.mjs, recorded from this engine since TEG-115 (tests/fixture/); do not edit.
+torus_graph 53360183
+torus_ground bf57d0a0
+torus_courses 4dffd864
+torus_ribbons 51d94306
+torus_basins 3a436e21
+torus_coast fed307f7
 sphere_graph ea448d6d
 sphere_ground 8570c7f5
 sphere_courses 2da7b6ef

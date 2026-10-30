@@ -6,10 +6,10 @@ raster_torus_calm 0f84e2c2
 raster_sphere_full de830580
 raster_sphere_status 7776ae47
 raster_sphere_calm a40450b2
-mesh_torus_single b73b2560
-mesh_torus_frozen 2f7f1e8b
-mesh_torus_overlapped ef873b44
-mesh_torus_synchronous 934f12f7
+mesh_torus_single 5b0a6a37
+mesh_torus_frozen 90e0c9b5
+mesh_torus_overlapped ba08be9d
+mesh_torus_synchronous 95bc4518
 mesh_sphere_single 156ef4fe
 mesh_sphere_frozen 1d6de047
 mesh_sphere_overlapped 829d9e9c
