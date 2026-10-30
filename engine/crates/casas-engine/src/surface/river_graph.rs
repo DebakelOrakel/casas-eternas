@@ -53,7 +53,7 @@ pub enum RiverRegime {
 }
 
 impl RiverRegime {
-    /// The code the ribbons carry (`RIVER_REGIME_CODE`).
+    /// The code the ribbons carry, one byte per polyline.
     pub fn code(self) -> u8 {
         match self {
             RiverRegime::Perennial => RIVER_REGIME_PERENNIAL,

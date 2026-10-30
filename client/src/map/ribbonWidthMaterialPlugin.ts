@@ -23,7 +23,7 @@ const REVEAL_BAND = 0.03
 
 // The flow regime's line style (F6): a second per-vertex attribute carries
 // the arc length along the centreline (world units) and the regime code
-// (hydrology.RIVER_REGIME_CODE). Intermittent rivers draw dashed, ephemeral
+// (the engine's RiverRegime::code). Intermittent rivers draw dashed, ephemeral
 // ones dotted — the cartographic convention — with the pattern in SCREEN
 // pixels from the same world-per-pixel uniform the width rule reads, so it
 // holds its rhythm at every zoom without a rebuild. Period and duty cycle

@@ -63,7 +63,7 @@ const angleBetween = (a: Vec3, b: Vec3): number => {
 }
 
 // `points` is [x, y, widthPx, …] in chart texels, `lengths` each polyline's
-// point count, `regimes` one byte per polyline (hydrology.RIVER_REGIME_CODE).
+// point count, `regimes` one byte per polyline (the engine's RiverRegime::code).
 // Null when nothing is drawn.
 export function buildGlobeRibbons(
   points: Float32Array,

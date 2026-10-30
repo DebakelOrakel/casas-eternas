@@ -40,7 +40,7 @@ use casas_engine::fields::field_mesh::{create_field_mesh_as, create_field_sample
 use casas_engine::surface::hydrology::{RIVER_MAX_WIDTH, RIVER_MIN_WIDTH};
 
 pub const CELL_SPACING_KM: f64 = 10.0;
-/// `RIVER_REGIME_CODE.ephemeral` (surface/hydrology.ts).
+/// `RiverRegime::Ephemeral.code()` (casas-engine surface/river_graph.rs).
 pub(crate) const RIVER_EPHEMERAL: u8 = 2;
 
 /// The ecology's fields a cell takes, in this order (the client's

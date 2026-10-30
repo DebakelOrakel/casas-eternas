@@ -93,10 +93,8 @@ export const RIVER_MAX_WIDTH = 4
 export interface RiverPolylines {
   points: Float32Array // [x, y, widthPx, …] in texel coords, all polylines concatenated
   lengths: Uint32Array // number of points in each polyline, in order
-  // The flow regime of each polyline (RIVER_REGIME_CODE), in order — a
-  // polyline never spans two regimes: its reach's.
+  // The flow regime of each polyline, in order (the engine's RiverRegime::code:
+  // 0 perennial, 1 intermittent, 2 ephemeral) — a polyline never spans two
+  // regimes: its reach's.
   regimes: Uint8Array
 }
-
-// The regime as the ribbons carry it, one byte per polyline.
-export const RIVER_REGIME_CODE = { perennial: 0, intermittent: 1, ephemeral: 2 } as const

@@ -637,7 +637,7 @@ export interface WorkerHydrologyDataMessage {
   // the engine's `river_polylines_from_graph`.
   riverPoints: ArrayBuffer
   riverLengths: ArrayBuffer
-  // The flow regime per polyline (Uint8, hydrology.RIVER_REGIME_CODE), one
+  // The flow regime per polyline (Uint8, the engine's RiverRegime::code), one
   // entry per length above. See the engine's `river_polylines_from_graph`.
   riverRegimes: ArrayBuffer
   // Lake water depth per full-res cell (Float32, 0 = dry). Only populated when the

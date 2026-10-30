@@ -61,7 +61,7 @@ export interface ToroidalRibbonOverlay {
   // ribbon. The width component is the hydrology's cartographic width
   // (RIVER_MIN_WIDTH..RIVER_MAX_WIDTH, √ of relative discharge) — how the
   // ribbon actually widens per zoom is the width rule (riverWidth.ts). Empty clears the
-  // mesh. `regimes` is one byte per polyline (hydrology.RIVER_REGIME_CODE):
+  // mesh. `regimes` is one byte per polyline (the engine's RiverRegime::code):
   // an intermittent river draws dashed, an ephemeral one dotted; absent, all
   // are perennial.
   setPolylines(points: Float32Array, lengths: Uint32Array, regimes?: Uint8Array): void
