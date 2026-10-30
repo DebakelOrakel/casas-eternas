@@ -3,6 +3,9 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-10-30
+- **changed** Server: a split deployment without a session key refuses to start. `global.auth.session-key`
+
 ## 2026-10-21
 - **changed** Build: `make release` packs only macOS on Apple silicon and Linux on x86-64, each with the job worker's engine.
 

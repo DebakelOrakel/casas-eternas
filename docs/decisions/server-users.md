@@ -85,9 +85,10 @@ checks that will consult this all answer yes there anyway.
   access-control plan have something to read.
 - Revocation (per-user notBefore) still waits on server-auth.md's step 8;
   the claim inherits its TTL-bounded staleness.
-- The ephemeral-signing-key warning should probably become a refusal once
-  `global.services.*` are set (split = shared key IS the trust domain) —
-  to be decided when the auth target is cut.
+- The ephemeral-signing-key warning became a refusal once
+  `global.services.*` name a peer (split = shared key IS the trust domain;
+  2026-10-30, `cmd/start.go` signingKey). A single server still makes an
+  ephemeral key.
 
 ## Status
 

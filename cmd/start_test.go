@@ -337,3 +337,17 @@ func TestASplitClientNamesTheLogin(t *testing.T) {
 		t.Errorf("config.json login = %+v, want %s", body.Login, auth.Path)
 	}
 }
+
+// A split deployment without a signing key refuses to start: each process
+// would make its own key and refuse its peers' tokens (DEC-0022). A single
+// server still makes an ephemeral one.
+func TestASplitDeploymentNeedsASigningKey(t *testing.T) {
+	if _, err := signingKey("", config.Services{}); err != nil {
+		t.Fatalf("a single server must start without a key: %v", err)
+	}
+	for _, peers := range []config.Services{{Worlds: "http://world"}, {Artifacts: "http://artifacts"}, {Relay: "nats://relay:4222"}} {
+		if _, err := signingKey("", peers); err == nil || !strings.Contains(err.Error(), keyAuthKey) {
+			t.Fatalf("with peers %+v the start must be refused naming %s, got %v", peers, keyAuthKey, err)
+		}
+	}
+}

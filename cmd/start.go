@@ -827,7 +827,7 @@ func buildIdentity(mode config.AuthMode, cfg config.Config) (*identity.Resolver,
 		// verify the tokens this server issues, but nothing issues them yet.
 		return nil, nil, fmt.Errorf("auth mode %s is not implemented yet", mode)
 	}
-	key, err := signingKey(cfg.Global.Auth.SessionKey)
+	key, err := signingKey(cfg.Global.Auth.SessionKey, cfg.Global.Services)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -879,9 +879,16 @@ func openCredentials(cfg config.Config) (*user.Registry, error) {
 // Saying so loudly is the other half: the consequences — sessions lost on
 // restart, replicas that reject each other's tokens — are invisible until they
 // bite, and by then they look like a bug rather than a missing setting.
-func signingKey(path string) ([]byte, error) {
+//
+// With a peer in global.services the shared key IS the trust domain
+// (DEC-0022): each process would make its own key and refuse its peers'
+// tokens, so a split deployment without a key refuses to start (2026-10-30).
+func signingKey(path string, peers config.Services) ([]byte, error) {
 	if path != "" {
 		return token.ReadKey(path)
+	}
+	if peers.Worlds != "" || peers.Artifacts != "" || peers.Relay != "" {
+		return nil, fmt.Errorf("%s is not set, but global.services names a peer: each process would make its own key and refuse the others' tokens", keyAuthKey)
 	}
 	key, err := token.GenerateKey()
 	if err != nil {
