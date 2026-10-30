@@ -10,7 +10,7 @@ summary.de: Kontinentale Kruste als dauerhafte „Flösse“, entkoppelt von den
 area: generator
 stage: built
 createdAt: 2026-07-24
-updatedAt: 2026-10-29
+updatedAt: 2026-10-30
 concepts: [generator.concept.craton, generator.concept.young-crust]
 related: [DEC-0011]
 ---
@@ -365,3 +365,9 @@ decided; Phases 1–5 implemented. 2026-10-14: the relief's boundary
 classification reads the crust on each side (the addendum above).
 2026-10-29: the events and the history's trench read it too (the
 addendum, DES-0027 entry 27).
+2026-10-30: the island-arc births decided (TEG-111), to be built with
+pipeline v16: a raft carries its crust's thickness, so an arc's raft
+stands lower than a continent; an arc's raft is not recycled while it is
+young; an arc gives birth when its feature's thickness passes a
+threshold. Until then the arcs build volcanoes only
+([DEC-0051](./volcanic-islands.md)).

@@ -1,12 +1,12 @@
 # Hashes of client/src/generator/pipeline/worldStages.ts, for crates/casas-engine/tests/world_stages.rs.
 # Written by the TypeScript engine, recorded from this one since DEC-0049 (tests/fixture/); do not edit.
-torus_climate 5c3fce1d
-torus_route 834b85a4
-torus_features 16ade0b7
-torus_ecology 3f429ab0
-torus_refined ada6cfdd
-sphere_climate 570d8292
-sphere_route ebdd41e4
-sphere_features 16e52add
-sphere_ecology 25452068
-sphere_refined a2d52ddd
+torus_climate fe032d04
+torus_route 76cbad66
+torus_features e59a96e9
+torus_ecology 3f75418a
+torus_refined 5ddab1ca
+sphere_climate 603a1751
+sphere_route 45f57d30
+sphere_features 97720833
+sphere_ecology 7cd564a4
+sphere_refined 8428faa0

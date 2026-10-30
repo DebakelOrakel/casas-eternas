@@ -38,9 +38,10 @@ const PIPELINE_OF_CODE: Readonly<Record<string, string>> = {
 // (DES-0027 entry 19, 2026-10-29), the plates move otherwise (entries
 // 4, 2 and 27, the same day), the land stands at other heights (entries
 // 18, 9 and 26, 2026-10-30), the climate is warmer at the poles and
-// wetter on the coastal slopes (entries 14 and 13, the same day) and the
+// wetter on the coastal slopes (entries 14 and 13, the same day), the
 // ice cuts by its basal stress and below the sea (entry 17, the same
-// day), besides level 1's other ecology fields.
+// day) and the island arcs rise above the sea (entry 5, the same day),
+// besides level 1's other ecology fields.
 // Not a migration: a statement of equality of the worlds. Each entry
 // names the current pipeline, not the next one: the lookup is one step.
 const SAME_WORLDS_AS: Readonly<Record<string, string>> = {

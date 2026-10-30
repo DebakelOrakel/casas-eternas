@@ -12,6 +12,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 - **fixed** Climate: mountain slopes that rise straight from the sea get their rain on the windward side, so a seed makes a different world. `generator.step.climate`
 - **fixed** Hydrology: basins under an ice sheet are marked as subglacial basins and no longer count as lakes. `generator.step.climate`
 - **changed** Tectonics: glaciers erode their beds faster, up to about 1 mm a year, and cut fjords to more than 1000 m below the sea, so a seed makes a different world. `generator.step.tectonics`
+- **changed** Tectonics: mature island arcs rise above the sea as chains of volcanic islands, so a seed makes a different world. `generator.step.tectonics`
 
 ## 2026-10-29
 - **fixed** Tectonics: plates no longer crowd into one region and freeze over a long history, so about a dozen plates stay spread over the world, and a seed makes a different world. `generator.step.tectonics`

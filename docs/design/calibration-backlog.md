@@ -97,8 +97,49 @@ procedure.
 
 ## Ocean margins
 
-5. **Island arcs never rise in the history.** The uplift acts on land
-   only. Found in 8e. Together with 6–8: 3–5 h.
+5. ~~**Island arcs never rise in the history.** The uplift acts on land
+   only. Found in 8e. Together with 6–8: 3–5 h.~~
+   Mostly done 2026-10-27 by the volcanoes' build (DEC-0051); the rest
+   done 2026-10-30 (TEG-54). An arc built only in an epoch with a
+   deposit, at the boundary, where its cones stood on the trench, and the
+   flexure takes some 0.8 of a cone's load on young ocean: the cones
+   stopped near −3000 m (left out of the flexure, −1700 m; 1 seed). Now
+   an arc builds while it is active (fed within volcanoes.rs
+   `ARC_ACTIVE_EPOCHS`, 8), its cones `volcano_arc_gap_m` (150 km; Earth's
+   arc–trench gap 100–250 km) into the overriding plate, at
+   `volcano_build_m_per_myr` 2250 (1500; about 30 km³ per km of arc and
+   Myr at most, Earth 30–90). The target: about half of the mature arcs'
+   volcanic fronts with land within 80 km (the Aleutians, Kurils,
+   Marianas and Lesser Antilles are chains of islands with gaps; Izu–Bonin
+   has fewer), and their islands near Earth's arc islands at a quarter of
+   its area (some 250 thousand km²). 12 seeds per shape (torus /
+   sphere), 2048 × 1024, archean 200, epochs 1–100, at epochs 40 / 60 /
+   100, before → after: the arc features with land within 80 km 3.0 / 4.8
+   / 8.5 → 9.0 / 18.4 / 25.1 % and 7.2 / 8.9 / 10.3 → 12.5 / 18.1 / 20.2
+   %; the active arcs' volcanic front with land within 80 km (the
+   feature itself before) 4.5 / 6.2 / 11.9 → 23.2 / 41.8 / 52.5 % and 8.2
+   / 9.8 / 12.7 → 28.0 / 38.5 / 46.5 %, the median top there −3770 /
+   −3060 / −2480 → −2100 / −620 / +240 m and −3810 / −3030 / −2480 →
+   −1810 / −950 / −270 m; the arc islands (land off the continental crust
+   within 80 km of an arc feature) 9 / 17 / 28 → 38 / 91 / 93 and 17 / 22
+   / 16 → 42 / 65 / 51, their area 51 / 108 / 88 → 172 / 405 / 998 and
+   81 / 110 / 93 → 176 / 320 / 639 thousand km²; the land 31.1 / 31.2 /
+   31.6 → 31.6 / 31.5 / 32.2 % and 29.3 / 29.2 / 28.6 → 29.5 / 29.7 /
+   29.2 %; the mean land height 696 / 825 / 1005 → 695 / 829 / 1014 m
+   and 682 / 706 / 752 → 682 / 710 / 761 m; above 2000 m 4.8 / 7.5 / 11.7
+   → 5.0 / 7.8 / 12.4 % and 4.4 / 5.4 / 6.8 → 4.5 / 5.5 / 7.2 %; above
+   4500 m 0.05 / 0.11 / 0.14 → 0.10 / 0.12 / 0.14 % and 0.13 / 0.14 /
+   0.05 → 0.15 / 0.11 / 0.05 %; the lakes 11.0 / 9.9 / 8.7 → 10.7 / 10.1
+   / 8.6 % and 5.1 / 6.1 / 4.5 → 4.8 / 5.7 / 4.3 % of the land. The
+   continental crust (35.7 / 35.9 % at epoch 0; 32.1 / 32.2 / 30.9 and
+   30.6 / 29.7 / 29.0 %) and the accretions (8 / 9 / 21 and 3 / 4 / 9 to
+   epochs 40 / 60 / 100) do not change: the arcs make no crust. 6 seeds
+   at 3000 m/Myr: the front 37 / 53 / 66 and 37 / 48 / 60 %, the arc
+   islands twice the area. The run takes 12 % longer (the built relief's
+   40 km mesh). **Open:** the arc islands' area passes Earth's after
+   epoch 60 and grows on: nothing takes an old arc away but the ocean
+   floor's age. Arc crust as rafts that accrete to the continents
+   (TEG-111, DEC-0003) is decided for pipeline v16.
 6. **The tectonics' trench features sit 468 km (`trenchOffsetM`) inside the
    subducting plate**, not at the boundary; the history's trench term
    (8e, `tectonics/trench.ts`) is placed correctly. The synthesis trench
@@ -471,6 +512,9 @@ procedure.
     2026-10-27 (6 worlds, epoch 40). Not estimated.
 
 ## Status
+
+2026-10-30: entry 5 done (TEG-54); the arc islands' growth after epoch
+60 waits for the arcs' rafts (TEG-111, v16).
 
 2026-10-30: entry 17 done (TEG-64); the torus's climb after epoch 40
 stays open (entry 26).

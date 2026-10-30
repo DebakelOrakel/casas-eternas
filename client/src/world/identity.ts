@@ -287,6 +287,12 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // cap of 800 m an epoch), and the ice stays grounded on a sea floor where
 // it does not float, so a trough below the sea is cut on. The worlds
 // change again: a recipe replays to other terrain.
+// And, unreleased: the island arcs (DES-0027 entry 5, 2026-10-30) — an
+// arc builds its volcanoes while it is active, not only in an epoch with
+// a deposit, behind the trench (TECTONICS_TUNING volcanoArcGapM) and
+// faster (volcanoBuildMPerMyr 1500 → 2250), so mature arcs rise above
+// the sea as chains of islands. The worlds change again: a recipe
+// replays to other terrain.
 export const AMPLIFICATION_ALGO_VERSION = 15
 
 // The constants the bake's output actually depends on. Passed in by the

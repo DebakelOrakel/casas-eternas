@@ -118,3 +118,14 @@ a node or two at 8–31 km.
 ## Status
 
 Built 2026-10-27.
+
+2026-10-30 (TEG-54, DES-0027 entry 5): the island arcs rise. An arc
+builds while it is active (fed within the 8 epochs `volcanoes.rs` counts,
+not only in an epoch with a deposit), its cones stand
+`volcano_arc_gap_m` (150 km) into the overriding plate, behind the
+trench, and `volcano_build_m_per_myr` is 2250 (about 30 km³ per km of arc
+and Myr at most; Earth 30–90). At 1500 and at the boundary the cones
+stopped near −3000 m: they stood on the trench, and the flexure takes
+some 0.8 of the load on young ocean. The large arc islands (Honshu, Java)
+stay open: arc crust as rafts that grow and accrete (TEG-111,
+[DEC-0003](./continental-crust-rafts.md)) is decided for pipeline v16.

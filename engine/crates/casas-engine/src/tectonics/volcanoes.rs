@@ -23,8 +23,9 @@ pub struct Volcano {
 
 const ARC_MARKER_CELL: f64 = 60.0;
 
-/// An arc feature fed within this many epochs is active.
-const ARC_ACTIVE_EPOCHS: f64 = 8.0;
+/// An arc feature fed within this many epochs is active; it builds its
+/// volcanoes as long (volcanic_build.rs).
+pub const ARC_ACTIVE_EPOCHS: f64 = 8.0;
 
 /// An active arc carries a volcano from this relative thickness on.
 const ARC_ACTIVE_THICKNESS: f64 = 3.0;

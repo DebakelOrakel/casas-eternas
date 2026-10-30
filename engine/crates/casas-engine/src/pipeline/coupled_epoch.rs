@@ -1228,7 +1228,14 @@ pub fn step_coupled_epoch(
 
     // The volcanoes' build (tectonics/volcanic_build.rs): the island arcs
     // and the hotspots, from the sea floor up.
-    let volcanic = build_volcanoes(&mesh, &result.z, &sim.features, &domain, epoch_ma);
+    let volcanic = build_volcanoes(
+        &mesh,
+        &result.z,
+        &sim.features,
+        &sim.seeds,
+        &domain,
+        epoch_ma,
+    );
     for v in 0..slots {
         if volcanic[v] > 0.0 {
             result.z[v] = (result.z[v] as f64 + volcanic[v] as f64 / ELEVATION_METERS) as f32;

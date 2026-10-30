@@ -17,10 +17,16 @@
 //! flat (islands of 10 000–1 000 000 km² three to four times as long as
 //! wide, 2026-10-27). A cone no node is within builds at its nearest node,
 //! within `volcano_reach_m`: the deep sea's mesh is 160 km, and the built
-//! relief refines it (mesh_density.rs). Active: an island arc (a volcanic feature that subsides, both plates
-//! oceanic) that took a deposit this epoch, a hotspot's feature while the
-//! plume feeds it. The plate carries the build away; the ocean floor's age
-//! takes it down again, and the waves plane it.
+//! relief refines it (mesh_density.rs). An island arc's cones stand
+//! `volcano_arc_gap_m` into the overriding plate, behind the trench, as an
+//! arc's volcanic front does: at the boundary they stood on the trench's
+//! depression. Active: an island arc (a volcanic feature that subsides,
+//! both plates oceanic) fed within ARC_ACTIVE_EPOCHS, so it builds while
+//! the subduction lasts (only in an epoch with a deposit, the cones stopped
+//! 3–4 km under the sea; TEG-54, 2026-10-30), and a hotspot's feature while
+//! the plume feeds it. The cone's load bends the plate (the flexure); the
+//! plate carries the build away; the ocean floor's age takes it down
+//! again, and the waves plane it.
 
 use crate::core::det_math::det_hypot;
 use crate::core::domain::Domain;
@@ -29,23 +35,45 @@ use crate::elevation::elevation_field::build_feature_buckets;
 use crate::elevation::elevation_scale::ELEVATION_METERS;
 use crate::mesh::periodic_delaunay::PeriodicTriangulation;
 
+use super::plate_seeds::PlateSeed;
 use super::tectonics_tune_params::TECTONICS_TUNING;
-use super::terrain_features::TerrainFeature;
+use super::terrain_features::{MovesWith, TerrainFeature};
+use super::volcanoes::ARC_ACTIVE_EPOCHS;
 
 fn active(f: &TerrainFeature) -> bool {
     let island_arc = f.volcanic == Some(true) && f.subsides && f.plate_b >= 0;
     let hotspot = f.plate_b == -1;
     if island_arc {
-        f.epochs_since_deposit < 1.0
+        f.epochs_since_deposit < ARC_ACTIVE_EPOCHS
     } else {
         hotspot && f.epochs_since_deposit < TECTONICS_TUNING.hotspot_epoch_interval
     }
 }
 
+// The direction from an island arc's feature into the overriding plate,
+// normal to the feature: the side of the plate the feature moves with.
+fn into_overriding(f: &TerrainFeature, seeds: &[PlateSeed], domain: &Domain) -> (f64, f64) {
+    let MovesWith::Plate(p) = f.moves_with else {
+        return (0.0, 0.0);
+    };
+    let Some(s) = seeds.get(p as usize) else {
+        return (0.0, 0.0);
+    };
+    let (nx, ny) = (-f.tangent_y, f.tangent_x);
+    let o = domain.delta(s.x, s.y, f.x, f.y);
+    if nx * o.x + ny * o.y < 0.0 {
+        (-nx, -ny)
+    } else {
+        (nx, ny)
+    }
+}
+
 // The active volcanoes' cones, each a feature of no length (so the feature
-// buckets find them).
-fn cones(features: &[TerrainFeature], domain: &Domain) -> Vec<TerrainFeature> {
+// buckets find them). An island arc's cones stand `volcano_arc_gap_m` into
+// the overriding plate.
+fn cones(features: &[TerrainFeature], seeds: &[PlateSeed], domain: &Domain) -> Vec<TerrainFeature> {
     let spacing = TECTONICS_TUNING.volcano_spacing_m / domain.metres_per_unit;
+    let gap = TECTONICS_TUNING.volcano_arc_gap_m / domain.metres_per_unit;
     let mut out = Vec::new();
     for f in features.iter().filter(|f| active(f)) {
         let along: &[f64] = if f.plate_b == -1 {
@@ -53,12 +81,17 @@ fn cones(features: &[TerrainFeature], domain: &Domain) -> Vec<TerrainFeature> {
         } else {
             &[-1.0, 0.0, 1.0]
         };
+        let (ix, iy) = if f.plate_b == -1 {
+            (0.0, 0.0)
+        } else {
+            into_overriding(f, seeds, domain)
+        };
         for &k in along {
             let p = domain.advance(
                 f.x,
                 f.y,
-                k * spacing * f.tangent_x,
-                k * spacing * f.tangent_y,
+                k * spacing * f.tangent_x + gap * ix,
+                k * spacing * f.tangent_y + gap * iy,
             );
             out.push(TerrainFeature {
                 x: p.x,
@@ -76,12 +109,13 @@ pub fn build_volcanoes(
     mesh: &PeriodicTriangulation,
     z: &[f32],
     features: &[TerrainFeature],
+    seeds: &[PlateSeed],
     domain: &Domain,
     epoch_ma: f64,
 ) -> Vec<f32> {
     let t = &TECTONICS_TUNING;
     let mut build_m = vec![0f32; z.len()];
-    let cones = cones(features, domain);
+    let cones = cones(features, seeds, domain);
     if cones.is_empty() {
         return build_m;
     }

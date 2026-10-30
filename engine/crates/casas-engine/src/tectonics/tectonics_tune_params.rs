@@ -59,6 +59,7 @@ pub struct TectonicsTuning {
     pub volcano_radius_m: f64,
     pub volcano_spacing_m: f64,
     pub volcano_reach_m: f64,
+    pub volcano_arc_gap_m: f64,
     pub rift_cool_radius_m: f64,
     pub rift_cool_amount: f64,
     pub rift_reset_radius_m: f64,
@@ -158,11 +159,25 @@ pub const TECTONICS_TUNING: TectonicsTuning = TectonicsTuning {
     hotspot_deposit_per_epoch: 4.0,
     hotspot_epoch_interval: 2.0,
     flood_basalt_deposit: 50.0,
-    volcano_build_m_per_myr: 1500.0,
+    // THE ISLAND ARCS (TEG-54; DES-0027 entry 5, 2026-10-30): an arc builds
+    // while it is active (fed within volcanoes.rs ARC_ACTIVE_EPOCHS, not
+    // only in an epoch with a deposit), its cones `volcano_arc_gap_m` into
+    // the overriding plate (Earth's arc–trench gap is 100–250 km; at the
+    // boundary they stood on the trench), and at 2250 m/Myr at the summit:
+    // at most about 30 km³ per km of arc and Myr (Earth 30–90). The cone's
+    // load bends the plate (the flexure takes some 0.8 of it on young
+    // ocean); at 1500 m/Myr the cones stopped near −3000 m. 12 seeds per
+    // shape (torus / sphere), 2048 × 1024, archean 200, epochs 1–100: the
+    // active arcs' volcanic front with land within 80 km at epochs 40 / 60
+    // / 100 23 / 42 / 52 % and 28 / 39 / 47 % (the arc features before: 3
+    // / 5 / 9 % and 7 / 9 / 10 %; 3000 m/Myr, 6 seeds: 37 / 53 / 66 % and
+    // 37 / 48 / 60 %, with twice the arc islands' area).
+    volcano_build_m_per_myr: 2250.0,
     volcano_top_m: 1500.0,
     volcano_radius_m: 50_000.0,
     volcano_spacing_m: 120_000.0,
     volcano_reach_m: 120_000.0,
+    volcano_arc_gap_m: 150_000.0,
     rift_cool_radius_m: 2_964_000.0,
     rift_cool_amount: 1.8,
     rift_reset_radius_m: 3_120_000.0,
