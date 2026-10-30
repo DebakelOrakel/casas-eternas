@@ -41,6 +41,9 @@ export interface LoadRequest {
 export interface LoadPanel {
   open(request: LoadRequest): void
   isOpen(): boolean
+  // The world's name and seed, when the open learns them after it starts
+  // (a picked file's, from its save).
+  setWorld(name: string, seed: string): void
   // Marks the step running, and every step before it done.
   start(id: string): void
   // `detail`: what the step found, at the row's end (a size).
@@ -216,6 +219,11 @@ export function createLoadPanel(host: HTMLElement): LoadPanel {
       render()
     },
     isOpen: () => !root.hidden,
+    setWorld(name, seed) {
+      if (!request) return
+      request = { ...request, name, seed }
+      render()
+    },
     start(id) {
       const index = rows.findIndex((row) => row.id === id)
       if (index < 0 || failed) return

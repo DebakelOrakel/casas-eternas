@@ -4257,12 +4257,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // THE LOAD PANEL: the steps of an open, from the archive to the last
   // stage computed after the restore (catchUpAfterRestore). A step the
   // world does not reach is dropped when the panel closes. `kept` is the
-  // world list's copy; a picked file has none, and no fetch.
+  // world list's copy; a picked file has none, and no fetch. A picked
+  // file's world is named by the file's name without its extension until
+  // its save gives the world's own name (TEG-106).
   const loadPanel = createLoadPanel(root)
-  function openLoad(kept?: OpenedCopy): void {
+  function openLoad(kept?: OpenedCopy, file?: File): void {
     loadPanel.open({
       screenKey: 'common.title.nav.generator',
-      name: kept?.name ?? '',
+      name: kept?.name ?? file?.name.replace(/\.[^.]*$/, '') ?? '',
       seed: kept?.seed ?? '',
       source: kept ? { where: kept.where, savedAt: kept.savedAt } : null,
       steps: [
@@ -4669,7 +4671,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       loadPanel.done('fetch', formatBytes(file.size))
       loadPanel.start('read')
     } else {
-      openLoad()
+      openLoad(undefined, file)
     }
     let zip: JSZip
     let yaml: string
@@ -4720,6 +4722,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // A recipe of a control that is gone (the water, DEC-0036 phase 8b-1)
       // is refused here, before the open tears the current world down.
       specFromYaml(yaml, '')
+      // A picked file's world gets its own name in the panel now (the
+      // epochs and the uid are not used here).
+      if (!kept) {
+        const named = recordFromYaml(yaml, { archeanEpochs: 0, epoch: 0 }, () => '')
+        loadPanel.setWorld(named.name, named.spec.seed)
+      }
       shape = kind === 'SphereWorld' ? 'sphere' : 'flat'
       if (!archeanPayload) {
         if (!stateFile) throw new Error('missing files')
