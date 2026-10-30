@@ -2,7 +2,8 @@
 //! width / 256, the ocean age's mesh, which the two share — with its
 //! zonal bands, the distance to the sea, the graph's connected parts, the
 //! seas along the parallels, and the terrain the climate reads. The
-//! TypeScript file explains each.
+//! TypeScript port (`client/src/generator/climate/climateMesh.ts`, git
+//! history) explains each.
 //!
 //! The mesh itself is the caller's `SharedFieldMesh` (the world's, as for
 //! the ocean age); a `ClimateMesh` holds what the climate adds to it.

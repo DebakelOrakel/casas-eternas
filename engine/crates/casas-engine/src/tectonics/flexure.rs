@@ -2,7 +2,8 @@
 //! (ADAPTIVE_MESH_PLAN.md phase 5.3, DEC-0036 phase 6): the plate equation
 //! ∇²(D ∇²w) + ρm g w = −ρc g h, discretised as K diag(R / A) K w + A w =
 //! −(ρc / ρm) A h and solved by conjugate gradients, matrix-free. The
-//! reasoning and the measurements are in the TypeScript file.
+//! reasoning and the measurements are in the TypeScript port
+//! (`client/src/generator/tectonics/flexure.ts`, git history).
 
 use crate::core::det_math::det_pow;
 use crate::core::domain::Domain;

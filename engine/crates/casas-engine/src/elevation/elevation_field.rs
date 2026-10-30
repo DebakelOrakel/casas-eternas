@@ -2,7 +2,8 @@
 //! (the warped margin profile over the age-deepened ocean floor, the
 //! interior's hypsometry), the uplift deck of the terrain features over a
 //! bucket index, the ridged detail and the plains' micro-relief. The
-//! reasoning and the measurements are in the TypeScript file.
+//! reasoning and the measurements are in the TypeScript port
+//! (`client/src/generator/elevation/elevationField.ts`, git history).
 //!
 //! Not ported, because it changes the time and nothing else: the render's
 //! cache of each cell's warped point and relief. The ocean age is read

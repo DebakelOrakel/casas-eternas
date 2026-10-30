@@ -2,7 +2,9 @@
 //! climate's field mesh — moisture evaporated over the sea, advected
 //! downwind, rained out (more on windward slopes), shaped by the zonal
 //! bands; with the refinement's sea, its anomaly and its ocean highs when
-//! given. The TypeScript file explains each term.
+//! given. The TypeScript port
+//! (`client/src/generator/climate/precipitation.ts`, git history) explains
+//! each term.
 
 use crate::core::det_math::{det_cos, det_exp, det_hypot};
 use crate::core::js;

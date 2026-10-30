@@ -1,6 +1,7 @@
 //! `climate/salinity.ts`: the sea surface's salt from its fresh-water
 //! budget, carried by the currents, and where the cold salty water sinks.
-//! The TypeScript file explains the budget and the sinking rule.
+//! The TypeScript port (`client/src/generator/climate/salinity.ts`, git
+//! history) explains the budget and the sinking rule.
 
 use crate::core::js;
 use crate::fields::field_mesh::SharedFieldMesh;

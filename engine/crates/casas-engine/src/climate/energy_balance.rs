@@ -1,7 +1,9 @@
 //! `climate/energyBalance.ts`: the year's temperature cycle around the
 //! annual mean, from a linear energy balance solved per annual harmonic on
 //! the climate's field mesh (BiCGSTAB with a two-level preconditioner), and
-//! the daily-mean insolation. The TypeScript file explains the equation.
+//! the daily-mean insolation. The TypeScript port
+//! (`client/src/generator/climate/energyBalance.ts`, git history) explains
+//! the equation.
 
 use std::collections::HashMap;
 
@@ -162,8 +164,8 @@ pub fn seasonal_cycle(
 /// The tropics' weak temperature gradient: the land's departure damped by
 /// `ebm_tropic_damping` up to `ebm_tropic_full_deg` from the equator, and
 /// less toward `ebm_tropic_none_deg` (a smoothstep), past which the land
-/// keeps its cycle. The climate step's TypeScript file explains the
-/// constants (`ebmTropicDamping`).
+/// keeps its cycle. climate_tune_params.rs explains the constants
+/// (`ebm_tropic_damping`).
 fn damp_tropical_land(
     cycle: &mut [f64],
     terrain: &ClimateTerrain,

@@ -1,7 +1,8 @@
 //! `pipeline/tilePlan.ts`: the tile levels' graph — which tiles a refine
 //! plan computes below level 1, and what each waits for: its parents and
 //! the tiles of its own level whose water enters it, the flow edges cut
-//! acyclic from level 1's drainage. The TypeScript file explains the
+//! acyclic from level 1's drainage. The TypeScript port
+//! (`client/src/generator/pipeline/tilePlan.ts`, git history) explains the
 //! rules. The keys are TypeScript's strings, so every tie and every sort
 //! falls as there.
 

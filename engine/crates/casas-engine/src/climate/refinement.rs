@@ -3,8 +3,9 @@
 //! the year's cycle, the months' pressure and wind, the ocean with its
 //! highs, upwelling, salt and overturning, the months' rain, fog and föhn,
 //! the rain's reliability and the storms. One call, in its load-bearing
-//! order; the TypeScript file explains each step. Not ported: the progress
-//! callback.
+//! order; the TypeScript port
+//! (`client/src/generator/climate/refinement.ts`, git history) explains
+//! each step. Not ported: the progress callback.
 
 use crate::core::det_math::{det_cos, det_hypot, det_sin};
 use crate::core::js;

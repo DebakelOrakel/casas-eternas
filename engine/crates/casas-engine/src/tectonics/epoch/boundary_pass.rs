@@ -3,7 +3,8 @@
 //! terrain features (at the Voronoi boundaries and at the carriers'
 //! margins), accretion at subduction arcs, and the decision which plate
 //! rift, plate merge and continental rift the epoch has earned. The
-//! reasoning and the measurements are in the TypeScript file.
+//! reasoning and the measurements are in the TypeScript port
+//! (`client/src/generator/tectonics/epoch/boundaryPass.ts`, git history).
 
 use std::collections::HashMap;
 

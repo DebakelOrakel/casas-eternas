@@ -1,7 +1,8 @@
 //! `archean/archeanStep.ts`: one Archean epoch: convection, drift on the
 //! flow with compaction, nucleation by the land share, recycling,
 //! collisions and break-up, consolidation. The parameters' measurements
-//! are in the TypeScript file.
+//! are in the TypeScript port
+//! (`client/src/generator/archean/archeanStep.ts`, git history).
 
 use crate::core::det_math::sq;
 use crate::crust::crust_tune_params::{MERGE_OVERLAP_FACTOR, RAFT_CONNECT_FACTOR};

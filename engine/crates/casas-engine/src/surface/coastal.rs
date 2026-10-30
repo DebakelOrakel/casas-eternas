@@ -1,7 +1,9 @@
 //! `surface/coastal.ts`: the coast as a process — the shore line on the
 //! mesh, the waves' exposure (wind² × fetch), the wave erosion toward the
 //! wave base, and the one-line drift along the shore with its deposits
-//! and export. The TypeScript file explains each part.
+//! and export. The TypeScript port
+//! (`client/src/generator/surface/coastal.ts`, git history) explains each
+//! part.
 
 use crate::core::det_math::det_hypot;
 use crate::core::js;

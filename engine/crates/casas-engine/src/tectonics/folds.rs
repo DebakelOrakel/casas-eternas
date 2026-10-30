@@ -1,7 +1,8 @@
 //! `tectonics/folds.ts`: FOLDS (ADAPTIVE_MESH_PLAN.md phase 5.7), the
 //! uplift's multiplier at a convergent margin: a train of anticlines and
 //! synclines across the nearest active range, averaged over the width of
-//! the cell it stands for. The reasoning is in the TypeScript file.
+//! the cell it stands for. The reasoning is in the TypeScript port
+//! (`client/src/generator/tectonics/folds.ts`, git history).
 
 use crate::core::det_math::{det_cos, det_sin};
 use crate::core::domain::Domain;

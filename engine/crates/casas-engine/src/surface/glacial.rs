@@ -1,13 +1,16 @@
 //! `surface/glacial.ts`: ice as a process — the epoch's ice on the terrain
 //! mesh at its steady state (the balance-flux inversion, Glen's law), the
 //! cut it does (sliding and the buzzsaw above the ELA) and the till it
-//! leaves at the termini. The TypeScript file explains each part. Not
-//! ported: `iceInvariants`, a check of the raster harnesses.
+//! leaves at the termini. The TypeScript port
+//! (`client/src/generator/surface/glacial.ts`, git history) explains each
+//! part. Not ported: `iceInvariants`, a check of the raster harnesses.
 //!
 //! Since 2026-10-30 (DES-0027 entry 17) two parts are the engine's only:
 //! the ice stays grounded on a sea floor where it is thick enough not to
 //! float, and the sliding cut has the basal shear stress as its bound
-//! (`glacial_erosion_on_mesh`). The TypeScript file does not know them.
+//! (`glacial_erosion_on_mesh`). The TypeScript port
+//! (`client/src/generator/surface/glacial.ts`, git history) did not know
+//! them.
 
 use std::collections::{HashMap, HashSet};
 

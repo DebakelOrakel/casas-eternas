@@ -1,7 +1,9 @@
 //! `surface/erosionEngineState.ts`: the erosion engine's graph index and
-//! its state. The TypeScript file explains the active set, the graph and
-//! the two sections; here the sections are plain structs; the shared
-//! buffers the worker pool needs for them have no counterpart.
+//! its state. The TypeScript port
+//! (`client/src/generator/surface/erosionEngineState.ts`, git history)
+//! explains the active set, the graph and the two sections; here the
+//! sections are plain structs; the shared buffers the worker pool needs for
+//! them have no counterpart.
 
 use crate::core::domain::DomainGrid;
 use crate::core::shared::SharedF32;

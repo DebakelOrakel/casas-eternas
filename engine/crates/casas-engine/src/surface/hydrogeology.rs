@@ -1,7 +1,8 @@
 //! `surface/hydrogeology.ts`: the water under the ground as a
 //! classification — one permeability per node, the regime re-judged with
 //! the baseflow, the springs and oases, and the water table's depth. The
-//! TypeScript file explains each rule.
+//! TypeScript port (`client/src/generator/surface/hydrogeology.ts`, git
+//! history) explains each rule.
 
 use crate::climate::precipitation::OCEAN_PRECIP;
 use crate::core::js;

@@ -3,8 +3,9 @@
 //! water balance, the lakes and terminal seas as water bodies, the flow
 //! regime's climate inputs, the channel criterion, the watersheds and the
 //! riparian moisture; and the water bodies read back on a raster. The
-//! TypeScript file explains each rule. The river polylines' type is the
-//! river graph's (surface/river_graph.rs).
+//! TypeScript port (`client/src/generator/surface/hydrology.ts`, git
+//! history) explains each rule. The river polylines' type is the river
+//! graph's (surface/river_graph.rs).
 
 use crate::climate::precipitation::OCEAN_PRECIP;
 use crate::core::det_math::{det_exp, det_log, det_pow};

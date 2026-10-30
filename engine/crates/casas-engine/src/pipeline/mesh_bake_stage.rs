@@ -1,8 +1,9 @@
 //! `pipeline/meshBakeStage.ts`: the global bake of one level — the save's
 //! mesh refined to the level's budget, eroded for a short transient with
 //! the bake's policy (no uplift, the coastline pinned to the parent's),
-//! and the level's waters derived on it. The TypeScript file explains the
-//! policy. The progress callback is not ported yet: the boundary to
+//! and the level's waters derived on it. The TypeScript port
+//! (`client/src/generator/pipeline/meshBakeStage.ts`, git history) explains
+//! the policy. The progress callback is not ported yet: the boundary to
 //! TypeScript adds it.
 
 use crate::climate::climate_points::{

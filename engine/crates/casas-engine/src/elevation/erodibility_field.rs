@@ -1,6 +1,8 @@
 //! `elevation/erodibilityField.ts`: the smooth K-factor field from the
 //! crust's history — hard cratons, soft young sutures, hard old ones,
-//! flood-basalt caprock. The TypeScript file explains each story.
+//! flood-basalt caprock. The TypeScript port
+//! (`client/src/generator/elevation/erodibilityField.ts`, git history)
+//! explains each story.
 
 use crate::core::domain::Domain;
 use crate::core::js;

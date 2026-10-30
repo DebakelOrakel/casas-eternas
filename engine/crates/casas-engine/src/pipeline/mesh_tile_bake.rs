@@ -2,8 +2,10 @@
 //! tile's mesh eroded for a short transient with the level bake's policy,
 //! the halo frozen, the edge row pinned, the water entering over the edge
 //! from upstream tiles and from level 1's rivers, and the outflow at each
-//! edge node. The TypeScript file explains the boundary rule. The progress
-//! callback is not ported yet: the boundary to TypeScript adds it.
+//! edge node. The TypeScript port
+//! (`client/src/generator/pipeline/meshTileBake.ts`, git history) explains
+//! the boundary rule. The progress callback is not ported yet: the boundary
+//! to TypeScript adds it.
 
 use std::collections::{HashMap, HashSet};
 

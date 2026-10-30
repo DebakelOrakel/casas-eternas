@@ -1,7 +1,8 @@
 //! `climate/monsoon.ts`: seasonal precipitation and the signed monsoon
 //! index — the precipitation model run for the two opposite seasons, each
 //! with its shifted rain belt and its land-sea monsoon wind. The
-//! TypeScript file explains the index's sign.
+//! TypeScript port (`client/src/generator/climate/monsoon.ts`, git history)
+//! explains the index's sign.
 
 use crate::fields::field_mesh::SharedFieldMesh;
 use crate::fields::field_operators::gradient;

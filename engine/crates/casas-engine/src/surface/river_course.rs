@@ -1,7 +1,8 @@
 //! `surface/riverCourse.ts`: what a river does below the channel head —
 //! its pattern from physics, the meanders as a bend model with cutoffs,
 //! the braids and the delta's distributaries drawn by rule. The
-//! TypeScript file explains each rule and constant.
+//! TypeScript port (`client/src/generator/surface/riverCourse.ts`, git
+//! history) explains each rule and constant.
 
 use std::f64::consts::PI;
 

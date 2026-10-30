@@ -1,7 +1,8 @@
 //! `climate/pressure.ts`: surface pressure and the wind it drives for one
 //! month, on the climate's field mesh — the zonal bands, a smoothed thermal
 //! part, the balance of pressure gradient, Coriolis and friction, and the
-//! turn a high range gives the wind. The TypeScript file explains each.
+//! turn a high range gives the wind. The TypeScript port
+//! (`client/src/generator/climate/pressure.ts`, git history) explains each.
 
 use crate::core::det_math::{det_cos, det_hypot, det_sin};
 use crate::core::js;

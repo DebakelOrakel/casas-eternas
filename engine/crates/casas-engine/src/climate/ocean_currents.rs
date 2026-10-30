@@ -1,7 +1,9 @@
 //! `climate/oceanCurrents.ts`: the ocean on the climate's field mesh — the
 //! wind-driven currents (Stommel with the island rule), the sea surface
 //! they make and carry inland, the Ekman upwelling and the overturning's
-//! inflow. The TypeScript file explains the equations and the solves.
+//! inflow. The TypeScript port
+//! (`client/src/generator/climate/oceanCurrents.ts`, git history) explains
+//! the equations and the solves.
 
 use crate::core::det_math::{det_cos, det_exp, det_hypot, det_sin};
 use crate::core::js;

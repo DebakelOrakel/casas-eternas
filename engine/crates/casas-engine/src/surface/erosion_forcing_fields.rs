@@ -1,7 +1,9 @@
 //! `surface/erosionForcingFields.ts`: the grid half of the erosion forcing —
 //! coarse fields in (U, the crust hardness, the water), the solver's
 //! forcing per raster cell or per node out, with the controls' parameters.
-//! The TypeScript file explains why it is one function for every producer.
+//! The TypeScript port
+//! (`client/src/generator/surface/erosionForcingFields.ts`, git history)
+//! explains why it is one function for every producer.
 
 use crate::core::det_math::{det_exp, det_pow};
 use crate::core::domain::{Domain, DomainGrid};

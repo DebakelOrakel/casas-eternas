@@ -2,9 +2,10 @@
 //! the erosion solver (in TypeScript still `ErosionEngine`, see DEC-0044's
 //! vocabulary) — implicit stream power, ξ–q sediment routing with two
 //! grain classes, Roering hillslope diffusion, marine diffusion and uplift,
-//! on the solver's graph (erosion_engine_state.rs). The TypeScript files
-//! explain the physics, the walks and the schemes; this port keeps their
-//! arithmetic, step for step.
+//! on the solver's graph (erosion_engine_state.rs). The TypeScript port
+//! (`client/src/generator/surface/erosionEngine.ts` and
+//! `erosionEnginePool.ts` beside it, git history) explains the physics, the
+//! walks and the schemes; this port keeps their arithmetic, step for step.
 //!
 //! Every value the TypeScript engine holds in a Float32Array is f32 here,
 //! and every expression over them is taken in f64 and stored back as f32,

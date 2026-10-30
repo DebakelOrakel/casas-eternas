@@ -3,7 +3,8 @@
 //! compacting, consolidating, recycling, growing by accretion, suturing,
 //! tearing at a rift, and coming apart into separate continents. Blob-set
 //! operations, all of them. The reasoning and the measurements are in the
-//! TypeScript file.
+//! TypeScript port (`client/src/generator/crust/raftLifecycle.ts`, git
+//! history).
 
 use crate::core::det_math::det_hypot;
 use crate::core::domain::Domain;

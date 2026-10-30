@@ -1,7 +1,8 @@
 //! `surface/sedimentBasins.ts`: sediment basins as features — where the
 //! last epoch's erosion left material, as connected sets of nodes with
 //! their volume, kind and the provenance of the catchments that feed them.
-//! The TypeScript file explains each rule.
+//! The TypeScript port (`client/src/generator/surface/sedimentBasins.ts`,
+//! git history) explains each rule.
 
 use std::f64::consts::PI;
 
