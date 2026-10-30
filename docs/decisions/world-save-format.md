@@ -263,8 +263,9 @@ Archean + 12 coupled epochs): see the DEC-0036 entry of this date.
 - Robustness against generator drift beyond the terrain mesh (the replayed-
   free snapshot already covers it — this is why we store the state, not just the
   recipe).
-- A save browser using `preview.png`; naming beyond the seed; validation of an
-  `apiVersion` mismatch on load (currently best-effort).
+- A save browser using `preview.png`; naming beyond the seed. No check of
+  `apiVersion` on load: it never changed, and the pipeline a world records
+  is what a load checks (decided 2026-10-30).
 
 ## Addendum 2026-09-29 — formatVersion 7
 

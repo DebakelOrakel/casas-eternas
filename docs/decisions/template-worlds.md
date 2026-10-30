@@ -172,8 +172,8 @@ Built 2026-10-15. Go: `internal/access` (`Grants.Template`,
 `copySave`, `AnonymousReads`), `internal/server/gate.go` (the predicate),
 `cmd/start.go` (the wiring). Client: `world/worldCopy.ts`,
 `world/worldRecord.ts`, `server/worldClient.ts`, the world list. Not built:
-an admin CLI command for the mark (the panel is the one way); the fallback
-of fork 5.
+the fallback of fork 5. No admin CLI command for the mark: the panel is the
+one way, and the CLI stays small (decided 2026-10-30).
 
 2026-10-15: under review. [rights-and-artifacts.md](../design/rights-and-artifacts.md)
 (DES-0028) sketches a revision: artifacts keyed by content only, so a copy
