@@ -28,7 +28,7 @@
 # they took most of the time and runners for what was tested already. The
 # one check is the tag's: it must be this commit's pipeline (below).
 
-name: engine release
+name: generator release
 
 on:
   push:

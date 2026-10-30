@@ -27,7 +27,7 @@ import (
 // /v1/jobs/engines/{pipeline}/{file} answers with a link to the file in the
 // artifact store. On a miss it downloads the file from the release of the
 // pipeline (releaseTags: `engine-<pipeline>`, .github/workflows/
-// engine-release.yml; the incubator's `incubator-<version>`),
+// generator-release.yml; the incubator's `incubator-<version>`),
 // checks it against the release's SHA256SUMS, and stores it first. A
 // worker never talks to the release's host.
 

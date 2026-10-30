@@ -1,7 +1,7 @@
 // THE PIPELINE MODULE of the job worker (workerContract.ts): what a task
 // computes, for one pipeline version. Bundled by `make worker` into
 // pipeline.mjs, with the native engine beside it (casas-engine.node), and
-// put into the pipeline's release (.github/workflows/engine-release.yml).
+// put into the pipeline's release (.github/workflows/generator-release.yml).
 // The host (jobWorker.ts) loads it in its compute thread and gives each
 // task its io: the world's archive, the artifact store, the progress.
 //

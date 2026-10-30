@@ -19,7 +19,7 @@
 #   pipeline.mjs                        the incubator's module (incubator.mjs); the name the launcher fetches
 #   SHA256SUMS
 #
-# No tests here, as in engine-release.yml: `make test` before a tag.
+# No tests here, as in generator-release.yml: `make test` before a tag.
 
 name: incubator release
 

@@ -24,7 +24,7 @@ related: [DEC-0044, DEC-0039, DEC-0043, DEC-0038]
 [DEC-0044](./rust-engine.md) left "versioned pipelines" open. Its direction
 was a worker image per pipeline. Two facts since then change the frame:
 
-- The engine has a release action (`.github/workflows/engine-release.yml`,
+- The engine has a release action (`.github/workflows/generator-release.yml`,
   2026-10-22). A tag that starts with `engine` builds the native engine for
   darwin/arm64, linux/amd64 and windows/amd64 and the WASM build, and
   makes a GitHub release. It runs no tests since 2026-10-22: `make test`
