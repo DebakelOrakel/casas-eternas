@@ -15,7 +15,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
-name = "casas-engine"
+name = "casas-generator"
 version = "0.1.0"
 dependencies = [
  "rayon",
@@ -23,30 +23,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "casas-engine-api"
+name = "casas-generator-api"
 version = "0.1.0"
 dependencies = [
- "casas-engine",
+ "casas-generator",
  "ryu-js",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "casas-engine-node"
+name = "casas-generator-node"
 version = "0.1.0"
 dependencies = [
- "casas-engine-api",
+ "casas-generator-api",
  "napi",
  "napi-build",
  "napi-derive",
 ]
 
 [[package]]
-name = "casas-engine-wasm"
+name = "casas-generator-wasm"
 version = "0.1.0"
 dependencies = [
- "casas-engine-api",
+ "casas-generator-api",
  "js-sys",
  "wasm-bindgen",
 ]
@@ -55,7 +55,7 @@ dependencies = [
 name = "casas-incubator"
 version = "0.1.0"
 dependencies = [
- "casas-engine",
+ "casas-generator",
  "ryu-js",
  "serde",
  "serde_json",

@@ -14,7 +14,7 @@
 // input is made by the incubator's own functions (historyInput.ts): the
 // chart's node map from level 1 (the crate's chart), the cells' input,
 // the rain. The engine's
-// native build reads the save and level 1 (casas-engine.node beside it).
+// native build reads the save and level 1 (casas-generator.node beside it).
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { domainOfKind } from '../src/generator/core/domain'
@@ -48,7 +48,7 @@ function builds(): NonNullable<typeof engines> {
   if (!engines) {
     const incubator = createRequire(import.meta.url)(fileURLToPath(new URL('./casas-incubator.node', import.meta.url))) as NativeIncubatorBuild
     if (incubator.version() !== INCUBATOR_VERSION) throw new Error(`casas-incubator.node is ${incubator.version()}, this module ${INCUBATOR_VERSION}`)
-    engines = { engine: loadNativeEngine(fileURLToPath(new URL('./casas-engine.node', import.meta.url))), incubator }
+    engines = { engine: loadNativeEngine(fileURLToPath(new URL('./casas-generator.node', import.meta.url))), incubator }
   }
   return engines
 }

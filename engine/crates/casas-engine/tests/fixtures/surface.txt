@@ -1,7 +1,0 @@
-# Hashes of client/src/generator/mesh/meshColumn.ts and surface/{cover,glacial,coastal}.ts, for crates/casas-engine/tests/surface.rs.
-# Written by engine/scripts/surfaceFixture.mjs; do not edit.
-column fe8d644b
-torus_ice 63ca83a4
-torus_coast 3c8d2639
-sphere_ice 63403ffc
-sphere_coast 88617af6

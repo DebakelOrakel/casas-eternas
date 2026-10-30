@@ -1,21 +1,21 @@
-# The engine's release (docs/decisions/rust-engine.md): a tag that starts
-# with `engine` builds the engine and puts the builds on a GitHub release
-# of that tag.
+# The generator's release (docs/decisions/rust-engine.md): a tag that
+# starts with `generator` builds the generator and puts the builds on a
+# GitHub release of that tag.
 #
-#   git tag engine-v12-53fe6efa9b110bf0 && git push origin engine-v12-53fe6efa9b110bf0
+#   git tag generator-v12-53fe6efa9b110bf0 && git push origin generator-v12-53fe6efa9b110bf0
 #
-# The tag is `engine-` and the pipeline a world.yaml records as
+# The tag is `generator-` and the pipeline a world.yaml records as
 # `status.pipeline` (world/worldPipeline.ts; `casas-eternas version` tells
-# it), so a save names the release of the engine that made it.
+# it), so a save names the release of the generator that made it.
 #
 # The assets:
-#   casas-engine-darwin-arm64.node      the job worker's engine on a Mac
-#   casas-engine-linux-amd64.node       on Linux with glibc (as `make engines`)
-#   casas-engine-windows-amd64.node     on Windows
-#   casas-engine-wasm.tar.gz            the generator's engine (wasm/ of engine/dist)
-#   constants.json                      the pipeline's constants
-#   pipeline.json                       the pipeline's versions: the world's and each tile level's
-#   pipeline.mjs                        the job worker's pipeline module; it reads what the engine computes
+#   casas-generator-darwin-arm64.node      the job worker's engine on a Mac
+#   casas-generator-linux-amd64.node       on Linux with glibc (as `make engines`)
+#   casas-generator-windows-amd64.node     on Windows
+#   casas-generator-wasm.tar.gz            the generator's engine (wasm/ of engine/dist)
+#   constants.json                         the pipeline's constants
+#   pipeline.json                          the pipeline's versions: the world's and each tile level's
+#   pipeline.mjs                           the job worker's pipeline module; it reads what the engine computes
 #   SHA256SUMS
 #
 # The builds are the ones `make engines` and `make engine` make, with the
@@ -32,7 +32,7 @@ name: generator release
 
 on:
   push:
-    tags: ['engine*']
+    tags: ['generator*']
 
 permissions:
   contents: read
@@ -45,7 +45,7 @@ jobs:
       # rustup installs engine/rust-toolchain.toml's toolchain and targets.
       - run: rustup toolchain install
         working-directory: engine
-      # The CLI must be the crate's version (casas-engine-wasm/Cargo.toml).
+      # The CLI must be the crate's version (casas-generator-wasm/Cargo.toml).
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-bindgen@0.2.129
@@ -57,10 +57,10 @@ jobs:
       - name: Build
         working-directory: engine
         run: |
-          cargo build --release --locked -p casas-engine-wasm --target wasm32-unknown-unknown
-          wasm-bindgen --target web --out-dir dist/wasm --out-name casas-engine \
-            target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm
-          cargo run --release --locked -q -p casas-engine-api --bin constants > dist/constants.json
+          cargo build --release --locked -p casas-generator-wasm --target wasm32-unknown-unknown
+          wasm-bindgen --target web --out-dir dist/wasm --out-name casas-generator \
+            target/wasm32-unknown-unknown/release/casas_generator_wasm.wasm
+          cargo run --release --locked -q -p casas-generator-api --bin constants > dist/constants.json
       # Before the native builds, which wait for this job. The versions are the job worker's
       # (`job-worker.mjs --version`). buildWorker.mjs copies the native
       # engine beside the bundles; this job has none, and --version does not
@@ -77,13 +77,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          touch engine/dist/casas-engine.node
+          touch engine/dist/casas-generator.node
           (cd client && npm ci && node scripts/buildWorker.mjs "$RUNNER_TEMP/worker/job-worker.mjs")
           node "$RUNNER_TEMP/worker/job-worker.mjs" --version > engine/dist/pipeline.json
           cat engine/dist/pipeline.json
           version=$(node -p 'require("./engine/dist/pipeline.json").pipelineVersion')
-          if [ "$GITHUB_REF_NAME" != "engine-$version" ]; then
-            echo "::error::The tag is $GITHUB_REF_NAME, but this commit's pipeline is $version: tag it engine-$version."
+          if [ "$GITHUB_REF_NAME" != "generator-$version" ]; then
+            echo "::error::The tag is $GITHUB_REF_NAME, but this commit's pipeline is $version: tag it generator-$version."
             exit 1
           fi
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
@@ -99,7 +99,7 @@ jobs:
           fi
       - run: |
           mkdir -p out
-          tar -czf out/casas-engine-wasm.tar.gz -C engine/dist wasm
+          tar -czf out/casas-generator-wasm.tar.gz -C engine/dist wasm
           cp engine/dist/constants.json engine/dist/pipeline.json "$RUNNER_TEMP/worker/pipeline.mjs" out/
       - uses: actions/upload-artifact@v4
         with:
@@ -115,10 +115,10 @@ jobs:
         working-directory: engine
       - name: Build
         working-directory: engine
-        run: cargo build --release --locked -p casas-engine-node --target aarch64-apple-darwin
+        run: cargo build --release --locked -p casas-generator-node --target aarch64-apple-darwin
       - run: |
           mkdir -p out
-          cp engine/target/aarch64-apple-darwin/release/libcasas_engine_node.dylib out/casas-engine-darwin-arm64.node
+          cp engine/target/aarch64-apple-darwin/release/libcasas_generator_node.dylib out/casas-generator-darwin-arm64.node
       - uses: actions/upload-artifact@v4
         with:
           name: darwin
@@ -135,10 +135,10 @@ jobs:
         run: |
           docker run --rm --platform linux/amd64 -v "$PWD/engine:/src" -w /src \
             -e RUSTUP_TOOLCHAIN=1.98.1 -e CARGO_TARGET_DIR=/src/target/linux-amd64 \
-            rust:1.98.1-bookworm cargo build --release --locked -p casas-engine-node
+            rust:1.98.1-bookworm cargo build --release --locked -p casas-generator-node
       - run: |
           mkdir -p out
-          cp engine/target/linux-amd64/release/libcasas_engine_node.so out/casas-engine-linux-amd64.node
+          cp engine/target/linux-amd64/release/libcasas_generator_node.so out/casas-generator-linux-amd64.node
       - uses: actions/upload-artifact@v4
         with:
           name: linux
@@ -158,10 +158,10 @@ jobs:
       # build needs no node.lib.
       - name: Build
         working-directory: engine
-        run: cargo build --release --locked -p casas-engine-node --target x86_64-pc-windows-msvc
+        run: cargo build --release --locked -p casas-generator-node --target x86_64-pc-windows-msvc
       - run: |
           mkdir -p out
-          cp engine/target/x86_64-pc-windows-msvc/release/casas_engine_node.dll out/casas-engine-windows-amd64.node
+          cp engine/target/x86_64-pc-windows-msvc/release/casas_generator_node.dll out/casas-generator-windows-amd64.node
       - uses: actions/upload-artifact@v4
         with:
           name: windows

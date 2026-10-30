@@ -5,7 +5,7 @@
 #                "verify with tsc", so this is the honest gate)
 #   make test    the Go tests, the engine's tests and the harnesses
 #   make worker  bundle the job worker for Node (./job-worker.mjs, with
-#                ./pipeline.mjs and ./casas-engine.node beside it)
+#                ./pipeline.mjs and ./casas-generator.node beside it)
 #   make engine  build the Rust engine, native and WASM, into engine/dist/
 #                (docs/decisions/rust-engine.md; the job worker runs on it)
 #   make run     build everything and start a local server on :8080
@@ -102,7 +102,7 @@ lint:
 	# The workspace builds the engine with `parallel` (the native crate turns
 	# it on); the engine alone builds it without, as the WASM build does.
 	cd engine && cargo clippy --workspace --all-targets -- -D warnings
-	cd engine && cargo clippy -p casas-engine --all-targets -- -D warnings
+	cd engine && cargo clippy -p casas-generator --all-targets -- -D warnings
 
 # Regenerate the CLI/config reference the docs site renders. Run after
 # changing commands, flags or their help texts; lint fails until you do.
@@ -114,12 +114,12 @@ test: engine
 	# The engine's tests run on fixtures the TypeScript engine wrote before
 	# it went (DEC-0044, fork 7c): data now, in engine/crates/*/tests/fixtures.
 	cd engine && cargo test --workspace --release
-	cd engine && cargo test -p casas-engine --release
+	cd engine && cargo test -p casas-generator --release
 	# WASM gives the native bits (DEC-0044, fork 4): the same tests built for
 	# wasm32-wasip1 and run under Node's WASI, without `parallel`, as the
 	# browser build is. About five minutes.
 	cd engine && CARGO_TARGET_WASM32_WASIP1_RUNNER="node --no-warnings $(CURDIR)/engine/scripts/wasiRunner.mjs" \
-		cargo test -p casas-engine --release --target wasm32-wasip1
+		cargo test -p casas-generator --release --target wasm32-wasip1
 	node engine/scripts/smoke.mjs
 	# The incubator: its WASM build on two synthetic worlds against
 	# the recorded reference, its native build against the WASM
@@ -134,24 +134,24 @@ test: engine
 # release's: `make engines`).
 # The WASM build needs the wasm32-unknown-unknown target, which rustup
 # installs from engine/rust-toolchain.toml.
-ENGINE_NODE_LIB := libcasas_engine_node.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
+ENGINE_NODE_LIB := libcasas_generator_node.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
 INCUBATOR_NODE_LIB := libcasas_incubator_node.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
 
 WASM_BINDGEN := 0.2.129
 
 engine:
-	cd engine && cargo build --release -p casas-engine-node
-	cd engine && cargo build --release -p casas-engine-wasm --target wasm32-unknown-unknown
-	# The CLI must be the crate's version (casas-engine-wasm/Cargo.toml):
+	cd engine && cargo build --release -p casas-generator-node
+	cd engine && cargo build --release -p casas-generator-wasm --target wasm32-unknown-unknown
+	# The CLI must be the crate's version (casas-generator-wasm/Cargo.toml):
 	# cargo install wasm-bindgen-cli --version $(WASM_BINDGEN) --locked
 	@wasm-bindgen --version | grep -qx 'wasm-bindgen $(WASM_BINDGEN)' \
 		|| (echo "engine: needs wasm-bindgen $(WASM_BINDGEN) — cargo install wasm-bindgen-cli --version $(WASM_BINDGEN) --locked" >&2; exit 1)
 	mkdir -p engine/dist
-	cp engine/target/release/$(ENGINE_NODE_LIB) engine/dist/casas-engine.node
+	cp engine/target/release/$(ENGINE_NODE_LIB) engine/dist/casas-generator.node
 	# The constants the pipeline versions are derived from (DEC-0044, fork 7a).
-	cd engine && cargo run --release -q -p casas-engine-api --bin constants > dist/constants.json
-	wasm-bindgen --target web --out-dir engine/dist/wasm --out-name casas-engine \
-		engine/target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm
+	cd engine && cargo run --release -q -p casas-generator-api --bin constants > dist/constants.json
+	wasm-bindgen --target web --out-dir engine/dist/wasm --out-name casas-generator \
+		engine/target/wasm32-unknown-unknown/release/casas_generator_wasm.wasm
 	# The incubator (docs/decisions/incubator-history-engine.md), a crate of
 	# its own beside the engine: its native and WASM builds, its version and
 	# the tuning the version hashes.
@@ -194,7 +194,7 @@ run: worker client docs
 # docs.content-dir), built by the targets above.
 build: worker
 	@mkdir -p bin
-	@cp job-worker.mjs pipeline.mjs casas-engine.node incubator.mjs casas-incubator.node bin/
+	@cp job-worker.mjs pipeline.mjs casas-generator.node incubator.mjs casas-incubator.node bin/
 	@for platform in $(PLATFORMS); do \
 		os=$${platform%/*}; arch=$${platform#*/}; \
 		echo "bin/casas-eternas-$$os-$$arch"; \
@@ -203,20 +203,20 @@ build: worker
 	done
 
 # The engine's native build for every platform of PLATFORMS,
-# bin/engine/<os>-<arch>/casas-engine.node, and the incubator's beside it
+# bin/engine/<os>-<arch>/casas-generator.node, and the incubator's beside it
 # (casas-incubator.node). On a Mac: darwin/arm64 by
 # rustup's target (engine/rust-toolchain.toml), linux/amd64 in Rust's
 # Debian image, so for glibc (the image's own is built for musl, in
 # deploy/Dockerfile). The registry is kept in a Docker volume between runs.
 engines:
-	cd engine && cargo build --release --locked -p casas-engine-node -p casas-incubator-node --target aarch64-apple-darwin
+	cd engine && cargo build --release --locked -p casas-generator-node -p casas-incubator-node --target aarch64-apple-darwin
 	docker run --rm --platform linux/amd64 -v $(CURDIR)/engine:/src -w /src \
-		-v casas-engine-cargo:/usr/local/cargo/registry \
+		-v casas-generator-cargo:/usr/local/cargo/registry \
 		-e RUSTUP_TOOLCHAIN=1.98.1 -e CARGO_TARGET_DIR=/src/target/linux-amd64 \
-		rust:1.98.1-bookworm cargo build --release --locked -p casas-engine-node -p casas-incubator-node
+		rust:1.98.1-bookworm cargo build --release --locked -p casas-generator-node -p casas-incubator-node
 	@mkdir -p bin/engine/darwin-arm64 bin/engine/linux-amd64
-	cp engine/target/aarch64-apple-darwin/release/libcasas_engine_node.dylib bin/engine/darwin-arm64/casas-engine.node
-	cp engine/target/linux-amd64/release/libcasas_engine_node.so bin/engine/linux-amd64/casas-engine.node
+	cp engine/target/aarch64-apple-darwin/release/libcasas_generator_node.dylib bin/engine/darwin-arm64/casas-generator.node
+	cp engine/target/linux-amd64/release/libcasas_generator_node.so bin/engine/linux-amd64/casas-generator.node
 	cp engine/target/aarch64-apple-darwin/release/libcasas_incubator_node.dylib bin/engine/darwin-arm64/casas-incubator.node
 	cp engine/target/linux-amd64/release/libcasas_incubator_node.so bin/engine/linux-amd64/casas-incubator.node
 
@@ -236,7 +236,7 @@ release: worker client docs build engines
 		mkdir -p $$dir; \
 		cp bin/casas-eternas-$$os-$$arch $$dir/casas-eternas; \
 		cp bin/job-worker.mjs bin/pipeline.mjs bin/incubator.mjs $$dir/; \
-		cp bin/engine/$$os-$$arch/casas-engine.node bin/engine/$$os-$$arch/casas-incubator.node $$dir/; \
+		cp bin/engine/$$os-$$arch/casas-generator.node bin/engine/$$os-$$arch/casas-incubator.node $$dir/; \
 		cp -R client/dist $$dir/dist; \
 		cp -R client/docs-dist $$dir/docs-dist; \
 		tar -czf bin/release/$$name.tar.gz -C bin/release $$name; echo "bin/release/$$name.tar.gz"; \

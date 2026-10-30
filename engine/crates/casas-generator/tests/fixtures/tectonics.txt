@@ -1,0 +1,15 @@
+# Hashes of client/src/generator/tectonics/, for crates/casas-generator/tests/tectonics.rs.
+# Written by engine/scripts/tectonicsFixture.mjs; do not edit.
+tuning e941a0ee
+torus_motion d61ca177
+torus_boundaries 42ee9ddc
+torus_features cd8bc956
+sphere_motion f024f8fc
+sphere_boundaries 0a2da38b
+sphere_features 3521d0c6
+torus_ocean_age 5c6f68d1
+torus_flexure 5e61c0b3
+torus_plumes aced4d7b
+sphere_ocean_age e44718f9
+sphere_flexure 188cf564
+sphere_plumes 76bafe50

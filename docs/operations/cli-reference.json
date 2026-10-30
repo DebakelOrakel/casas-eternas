@@ -280,10 +280,10 @@
           "env": "CASAS_GLOBAL_SERVICES_WORLDS"
         },
         {
-          "name": "jobs.engine-source",
+          "name": "jobs.generator-source",
           "default": "https://github.com/DebakelOrakel/casas-eternas/releases/download",
-          "usage": "Where the pipelines' releases are: a file of a release is \u003cthis\u003e/engine-\u003cpipeline\u003e/\u003cfile\u003e. The server downloads from there what a worker of another pipeline needs, checks it against the release's SHA256SUMS, and keeps it in the artifact store.",
-          "env": "CASAS_JOBS_ENGINE_SOURCE"
+          "usage": "Where the pipelines' releases are: a file of a release is \u003cthis\u003e/generator-\u003cpipeline\u003e/\u003cfile\u003e. The server downloads from there what a worker of another pipeline needs, checks it against the release's SHA256SUMS, and keeps it in the artifact store.",
+          "env": "CASAS_JOBS_GENERATOR_SOURCE"
         },
         {
           "name": "jobs.max-concurrent",
@@ -371,8 +371,8 @@
     {
       "path": "casas-eternas version",
       "use": "version",
-      "short": "Prints the build, the API version, the bake pipeline and the incubator this binary carries.",
-      "long": "Prints what this binary is.\n\nThe pipeline version is the one worth reading: artifacts are addressed by it,\nso a bake bundle from a different commit than the client expecting its output\nproduces artifacts nobody ever looks for — a failure that is otherwise silent.\nIt is read from the job worker bundle itself (jobs.worker), so it says what this\ninstallation would actually run. A world records the same version as the one\nthat made it, and this installation makes level 1 only of a world that records\nthis one.\n\nThe incubator version is the incubator's (its histories, H1): read from the\nincubator's module beside the bundle (incubator.mjs), it names the route the\nhistory jobs take and the version their artifacts are keyed by.\n\nA running server reports the same build string at GET /v1/capabilities."
+      "short": "Prints the build, the API version, the generator and the incubator this binary carries.",
+      "long": "Prints what this binary is.\n\nThe generator version (the pipeline version) is the one worth reading: artifacts are addressed by it,\nso a bake bundle from a different commit than the client expecting its output\nproduces artifacts nobody ever looks for — a failure that is otherwise silent.\nIt is read from the job worker bundle itself (jobs.worker), so it says what this\ninstallation would actually run. A world records the same version as the one\nthat made it, and this installation makes level 1 only of a world that records\nthis one.\n\nThe incubator version is the incubator's (its histories, H1): read from the\nincubator's module beside the bundle (incubator.mjs), it names the route the\nhistory jobs take and the version their artifacts are keyed by.\n\nA running server reports the same build string at GET /v1/capabilities."
     },
     {
       "path": "casas-eternas worker",
@@ -564,10 +564,10 @@
       "command": "casas-eternas"
     },
     {
-      "key": "jobs.engine-source",
-      "env": "CASAS_JOBS_ENGINE_SOURCE",
+      "key": "jobs.generator-source",
+      "env": "CASAS_JOBS_GENERATOR_SOURCE",
       "default": "https://github.com/DebakelOrakel/casas-eternas/releases/download",
-      "usage": "Where the pipelines' releases are: a file of a release is \u003cthis\u003e/engine-\u003cpipeline\u003e/\u003cfile\u003e. The server downloads from there what a worker of another pipeline needs, checks it against the release's SHA256SUMS, and keeps it in the artifact store.",
+      "usage": "Where the pipelines' releases are: a file of a release is \u003cthis\u003e/generator-\u003cpipeline\u003e/\u003cfile\u003e. The server downloads from there what a worker of another pipeline needs, checks it against the release's SHA256SUMS, and keeps it in the artifact store.",
       "command": "casas-eternas start"
     },
     {

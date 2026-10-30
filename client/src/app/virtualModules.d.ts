@@ -6,7 +6,7 @@ declare module 'virtual:handbook' {
 
 // The engine's constants for the pipeline versions (`make engine` writes
 // engine/dist/constants.json; generator/pipeline/engineConstants.ts).
-declare module 'casas-engine-constants' {
+declare module 'casas-generator-constants' {
   const constants: {
     // The history's tuning by group, nested as the objects are.
     tuning: Record<string, unknown>
@@ -20,9 +20,9 @@ declare module 'casas-engine-constants' {
 }
 
 // The Rust engine's WASM build (`make engine` writes it to engine/dist/wasm;
-// vite.config.ts's alias `casas-engine-wasm` names that directory), with the
+// vite.config.ts's alias `casas-generator-wasm` names that directory), with the
 // classes the adapter types (generator/pipeline/engine.ts).
-declare module 'casas-engine-wasm/casas-engine.js' {
+declare module 'casas-generator-wasm/casas-generator.js' {
   const init: (options: { module_or_path: string }) => Promise<unknown>
   export default init
   export const version: import('../generator/pipeline/engine').Engine['version']

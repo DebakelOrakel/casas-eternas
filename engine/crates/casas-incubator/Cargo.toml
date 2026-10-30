@@ -14,7 +14,7 @@ publish.workspace = true
 # generator — and changes none of them.
 
 [dependencies]
-casas-engine = { path = "../casas-engine" }
+casas-generator = { path = "../casas-generator" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 # JavaScript's number-to-text, for the log and the packed history's header,

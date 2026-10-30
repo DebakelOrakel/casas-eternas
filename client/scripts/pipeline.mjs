@@ -51,8 +51,8 @@ const H = 128
 // at epoch 5, 68% by epoch 41, ~5 ms per epoch.
 const ARCHEAN_EPOCHS = 20
 // The engine's WASM build, as the browser's worker loads it.
-const WASM = await import(`${CLIENT}/../engine/dist/wasm/casas-engine.js`)
-await WASM.default({ module_or_path: await readFile(`${CLIENT}/../engine/dist/wasm/casas-engine_bg.wasm`) })
+const WASM = await import(`${CLIENT}/../engine/dist/wasm/casas-generator.js`)
+await WASM.default({ module_or_path: await readFile(`${CLIENT}/../engine/dist/wasm/casas-generator_bg.wasm`) })
 
 let failures = 0
 const check = (name, ok, detail = '') => {

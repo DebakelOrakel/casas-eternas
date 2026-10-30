@@ -41,7 +41,7 @@
   "common.world.uid": "UID",
   "common.world.revision": "Revision",
   "common.world.checksum": "Checksum",
-  "common.world.pipeline": "Pipeline",
+  "common.world.pipeline": "Generator",
   "common.panel.signIn.title": "Sign in",
   "common.panel.signIn.intro": "With an account you can save worlds to the server and open them on any device.",
   "common.panel.signIn.user": "User",

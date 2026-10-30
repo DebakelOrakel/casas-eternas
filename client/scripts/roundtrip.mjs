@@ -29,8 +29,8 @@ const server = await createServer({ root: CLIENT, server: { middlewareMode: true
 const L = (p) => server.ssrLoadModule(p)
 // The engine's WASM build, as the browser loads it: the world layer reads
 // a save's forcing through it (DEC-0044, fork 7b).
-const ENGINE = await import(`${CLIENT}/../engine/dist/wasm/casas-engine.js`)
-await ENGINE.default({ module_or_path: await (await import('node:fs/promises')).readFile(`${CLIENT}/../engine/dist/wasm/casas-engine_bg.wasm`) })
+const ENGINE = await import(`${CLIENT}/../engine/dist/wasm/casas-generator.js`)
+await ENGINE.default({ module_or_path: await (await import('node:fs/promises')).readFile(`${CLIENT}/../engine/dist/wasm/casas-generator_bg.wasm`) })
 
 const M = {
   layers: await L('/src/world/save/worldLayers.ts'),

@@ -1,0 +1,18 @@
+[package]
+name = "casas-generator-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# The engine's surface to TypeScript (docs/decisions/rust-engine.md,
+# fork 6): a world as an object, its methods over plain data. Both
+# binding crates wrap it; it knows neither.
+[features]
+parallel = ["casas-generator/parallel"]
+
+[dependencies]
+casas-generator = { path = "../casas-generator" }
+ryu-js = "1.0.3"
+serde = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }

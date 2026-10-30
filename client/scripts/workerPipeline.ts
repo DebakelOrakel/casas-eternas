@@ -1,6 +1,6 @@
 // THE PIPELINE MODULE of the job worker (workerContract.ts): what a task
 // computes, for one pipeline version. Bundled by `make worker` into
-// pipeline.mjs, with the native engine beside it (casas-engine.node), and
+// pipeline.mjs, with the native engine beside it (casas-generator.node), and
 // put into the pipeline's release (.github/workflows/generator-release.yml).
 // The host (jobWorker.ts) loads it in its compute thread and gives each
 // task its io: the world's archive, the artifact store, the progress.
@@ -45,11 +45,11 @@ export const version: PipelineVersion = {
 }
 
 // THE ENGINE, the native build beside this module (`make worker` copies
-// engine/dist/casas-engine.node there). Loaded once, in the compute thread,
+// engine/dist/casas-generator.node there). Loaded once, in the compute thread,
 // at the first task: --version loads the module without it.
 let nativeEngine: NativeEngine | null = null
 function engine(): NativeEngine {
-  nativeEngine ??= loadNativeEngine(fileURLToPath(new URL('./casas-engine.node', import.meta.url)))
+  nativeEngine ??= loadNativeEngine(fileURLToPath(new URL('./casas-generator.node', import.meta.url)))
   return nativeEngine
 }
 

@@ -1,6 +1,6 @@
 // The ecology's vocabulary on the client: the field ids, the fine fields'
 // codec and the step's knobs. The rules and their tuning run in the engine
-// (engine/crates/casas-engine/src/ecology/); their TypeScript copy, which
+// (engine/crates/casas-generator/src/ecology/); their TypeScript copy, which
 // nothing ran, was removed 2026-10-29.
 
 // Ocean sentinel for the output fields (matches the climate fields' convention):

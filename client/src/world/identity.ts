@@ -156,7 +156,7 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // constant AMPLIFY_CONSTANTS hashes.
 // v3 (2026-08-08): the river threshold is no longer rescaled to a constant
 // physical catchment, so a finer bake now yields a genuinely denser network
-// instead of the same one at more vertices (engine/crates/casas-engine/src/surface/amplify.rs has the measurements).
+// instead of the same one at more vertices (engine/crates/casas-generator/src/surface/amplify.rs has the measurements).
 // The same invisible kind of change as v2 — it lives in which function gets
 // called, not in any constant AMPLIFY_CONSTANTS hashes — and without the bump
 // every cached 4k and 8k artifact, local and on the server, would keep serving
@@ -194,7 +194,7 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // new version the same key would name two different terrains depending on
 // which client baked it.
 // v9 (2026-08-15): the single-flow receiver is D8-LTD instead of plain
-// steepest descent (engine/crates/casas-engine/src/surface/flow_routing.rs has the method and the
+// steepest descent (engine/crates/casas-generator/src/surface/flow_routing.rs has the method and the
 // measurements). Incision and river tracing follow the true fall line instead
 // of accumulating the 8-direction rounding error — on a plane tilted 15° off
 // an axis, plain D8 holds one direction for 750 cells straight, and on real

@@ -34,8 +34,8 @@ const T = await server.ssrLoadModule('/src/map/globeTemperatureArc.ts')
 // The band is the engine's (climate/temperature.rs), from its WASM build
 // in engine/dist (`make engine`).
 const dist = new URL('../../engine/dist/wasm/', import.meta.url)
-const WASM = await import(new URL('casas-engine.js', dist).href)
-await WASM.default({ module_or_path: await readFile(new URL('casas-engine_bg.wasm', dist)) })
+const WASM = await import(new URL('casas-generator.js', dist).href)
+await WASM.default({ module_or_path: await readFile(new URL('casas-generator_bg.wasm', dist)) })
 // As the TypeScript band took it until 2026-10-30: no planet the default
 // one, the torus's pivot.
 const TEMP = { seaLevelTemperatureBand: (offset, contrast, planet) => WASM.seaLevelTemperatureBand(offset, contrast, planet, 'torus') }

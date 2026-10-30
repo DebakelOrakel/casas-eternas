@@ -291,7 +291,7 @@ every call must carry them too, or the bits change.
 
 **Answer: `wasm-bindgen`.** The API is some tens of methods with
 structures; napi and `wasm-bindgen` then generate both sides from one
-Rust surface (a crate `casas-engine-api` that both binding crates wrap),
+Rust surface (a crate `casas-generator-api` that both binding crates wrap),
 and the TypeScript adapter sees the same classes in the browser and in
 Node.
 
@@ -721,8 +721,8 @@ BUILDING since 2026-10-20:
   run under Node's WASI (`engine/scripts/wasiRunner.mjs`), passes
   against the same TypeScript fixtures as the native build — 24 test
   files, about five minutes single-threaded. `make test` runs it.
-- The boundary's frame (fork 6): `casas-engine-api` holds the world as
-  an object; `casas-engine-node` (napi) and `casas-engine-wasm`
+- The boundary's frame (fork 6): `casas-generator-api` holds the world as
+  an object; `casas-generator-node` (napi) and `casas-generator-wasm`
   (`wasm-bindgen` 0.2.129, the CLI pinned to it in `make engine`) wrap it
   one for one. Its first methods are the Archean's (a world in its
   genesis, a step, the mantle, the rafts); `engine/scripts/smoke.mjs`
@@ -823,7 +823,7 @@ BUILDING since 2026-10-20:
   arrays, the save's parts), `releaseWorld` frees a WASM world (napi's go
   with the garbage collector). `generator/pipeline/engineWasm.ts` loads
   the WASM build in the browser through the vite alias
-  `casas-engine-wasm` (engine/dist/wasm); `scripts/engineNative.ts`
+  `casas-generator-wasm` (engine/dist/wasm); `scripts/engineNative.ts`
   loads the native build in Node and types the job worker's classes (the
   replay, the tile plan, the tile baker) with the world layer's artifact
   forms. Checked: the smoke test loads the native build through it; a
@@ -875,7 +875,7 @@ BUILDING since 2026-10-20:
   went from the worker. The land tiles, the checkpoints' files, the
   progress, the cache and the artifact forms stay the worker's; a
   serving worker holds one `TileBaker` per level 1 in its cache.
-  `make worker` builds the engine and puts `casas-engine.node` beside
+  `make worker` builds the engine and puts `casas-generator.node` beside
   `job-worker.mjs`; the image builds it for its platform (Alpine, musl)
   in a stage of its own. The pipeline versions do not change: the bytes
   are the same. Checked on Morvane with the bundle: a level-2 and a
@@ -911,12 +911,12 @@ BUILDING since 2026-10-20:
   posts its progress: the engine's call gives none.
 - The tuning for the versions from the engine (fork 7a): the tuning
   structures derive serde's `Serialize` under TypeScript's names (one
-  rename: `flexureYoungsModulusGPa`), and `casas_engine_api::pipeline`
+  rename: `flexureYoungsModulusGPa`), and `casas_generator_api::pipeline`
   gives them by group with the amplification's table, the bake's loose
   constants, each tile level's cube and tile constants and each level's
   budget; `make engine` writes them to `engine/dist/constants.json`
   (the binary `constants`), the image in its engine stage. The world
-  layer reads them through the alias `casas-engine-constants`
+  layer reads them through the alias `casas-generator-constants`
   (`world/engineConstants.ts`) in `worldTuning`, `MESH_BAKE_CONSTANTS`
   and the tiles' versions. Checked against TypeScript's tables before
   they go: 426 tuning values, 51 of the amplification, 24 of the bake, 32

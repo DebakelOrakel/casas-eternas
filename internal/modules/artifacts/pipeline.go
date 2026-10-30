@@ -46,7 +46,7 @@ func (m *Module) PutPipelineFile(ctx context.Context, pipeline, file string, bod
 	if err := m.store.Write(ctx, uid, file, bytes.NewReader(body), int64(len(body))); err != nil {
 		return err
 	}
-	meta, err := json.Marshal(entryMeta{Key: key, Label: "engine-" + pipeline + " " + file, CreatedAt: time.Now().UnixMilli()})
+	meta, err := json.Marshal(entryMeta{Key: key, Label: "generator-" + pipeline + " " + file, CreatedAt: time.Now().UnixMilli()})
 	if err != nil {
 		return err
 	}

@@ -41,7 +41,7 @@
   "common.world.uid": "UID",
   "common.world.revision": "Revision",
   "common.world.checksum": "Prüfsumme",
-  "common.world.pipeline": "Pipeline",
+  "common.world.pipeline": "Generator",
   "common.panel.signIn.title": "Anmelden",
   "common.panel.signIn.intro": "Mit einem Konto speicherst du Welten auf dem Server und öffnest sie auf jedem Gerät.",
   "common.panel.signIn.user": "Benutzer",

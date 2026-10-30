@@ -117,7 +117,7 @@ const INCUBATOR_WASM = fileURLToPath(new URL('../engine/dist/incubator', import.
 export default defineConfig({
   plugins: [alwaysFullResponses(), handbook()],
   resolve: {
-    alias: { 'casas-engine-wasm': ENGINE_WASM, 'casas-engine-constants': ENGINE_CONSTANTS, 'casas-incubator-data': INCUBATOR_DATA, 'casas-incubator-wasm': INCUBATOR_WASM },
+    alias: { 'casas-generator-wasm': ENGINE_WASM, 'casas-generator-constants': ENGINE_CONSTANTS, 'casas-incubator-data': INCUBATOR_DATA, 'casas-incubator-wasm': INCUBATOR_WASM },
   },
   define: {
     __CASAS_BUILD__: JSON.stringify(BUILD),

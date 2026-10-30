@@ -39,7 +39,7 @@ use crate::climate_history::{ClimateHistory, ICE_REACH_KM, SEA_DROP_M, ice_may_c
 use crate::habitat::Habitat;
 use crate::log::LogEvent;
 use crate::simulation::{CLIMATE_YEARS, Ground, SPAN_YEARS, ground_of, ice_distance};
-use casas_engine::core::min_heap::MinHeap;
+use casas_generator::core::min_heap::MinHeap;
 
 /// The boats' reach over open sea at the span's start and end, km. The
 /// end is the default of its control (`Controls`).

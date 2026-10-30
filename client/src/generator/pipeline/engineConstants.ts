@@ -3,7 +3,7 @@
 // `make engine` writes engine/dist/constants.json, which this reads when it
 // loads, so a key needs no engine call. One source: a constant changed in
 // the engine changes the versions.
-import constants from 'casas-engine-constants'
+import constants from 'casas-generator-constants'
 
 export const ENGINE_CONSTANTS = constants
 

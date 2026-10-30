@@ -15,7 +15,7 @@
 // Domain.noise.frame) and an angular rate about it. The torus keeps the
 // drift + spin form above (`RigidMotion`), its data and its arithmetic
 // untouched. One type for both, `PlateMotion`; the engine's functions
-// (engine/crates/casas-engine/src/tectonics/plate_motion.rs) are the
+// (engine/crates/casas-generator/src/tectonics/plate_motion.rs) are the
 // interface the rest of tectonics uses (the velocity at a point, a point
 // moved forward and back, a motion fitted to the mantle flow, relaxed
 // toward one, or made to move with a velocity at a point), and each one

@@ -1,5 +1,5 @@
 # The engine gives the same bits in every build only through det_math
-# (crates/casas-engine/src/core/det_math.rs): the std functions below differ
+# (crates/casas-generator/src/core/det_math.rs): the std functions below differ
 # between platforms in the last bit, and mul_add is not what the TypeScript
 # engine computes. sqrt, abs, floor, round, min and max are exact and stay.
 disallowed-methods = [

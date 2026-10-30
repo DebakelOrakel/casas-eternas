@@ -4,11 +4,11 @@
 //! with it, the history's job takes its node map: both from this walk, so
 //! the two give the same bits.
 
-use casas_engine::core::det_math::{det_cos, det_sin};
-use casas_engine::core::domain::Domain;
-use casas_engine::mesh::mesh_raster::rasterise_node_field;
-use casas_engine::mesh::mesh_serial::{SerializedMesh, decode_mesh};
-pub use casas_engine::mesh::periodic_delaunay::PeriodicTriangulation;
+use casas_generator::core::det_math::{det_cos, det_sin};
+use casas_generator::core::domain::Domain;
+use casas_generator::mesh::mesh_raster::rasterise_node_field;
+use casas_generator::mesh::mesh_serial::{SerializedMesh, decode_mesh};
+pub use casas_generator::mesh::periodic_delaunay::PeriodicTriangulation;
 
 /// The heights, the biomes and, at half the chart's resolution, the nodes
 /// of one walk.
@@ -142,7 +142,7 @@ pub fn chart_pass(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casas_engine::mesh::lattice::bootstrap_lattice;
+    use casas_generator::mesh::lattice::bootstrap_lattice;
 
     /// The walk as written first, with `locate` and `barycentric` on each
     /// texel's chart point.

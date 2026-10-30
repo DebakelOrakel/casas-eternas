@@ -19,7 +19,7 @@ saves
 # Generated: the image builds its own from source in the web stage, and a stale
 # copy from the host would be the exact drift the single-image design avoids.
 job-worker.mjs
-casas-engine.node
+casas-generator.node
 casas-eternas
 engine/target
 engine/dist

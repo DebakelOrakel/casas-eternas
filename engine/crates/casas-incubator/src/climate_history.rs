@@ -57,10 +57,10 @@
 //! more) and slower (DRYING_SLOW_YEARS). simulation.rs THE LAND DRYING
 //! applies it, the rivers' cells excepted.
 
-use casas_engine::climate::koppen::KOPPEN_CODES;
-use casas_engine::core::det_math::{det_cos, det_pow, det_sin};
-use casas_engine::core::js;
-use casas_engine::core::rng::Mulberry32;
+use casas_generator::climate::koppen::KOPPEN_CODES;
+use casas_generator::core::det_math::{det_cos, det_pow, det_sin};
+use casas_generator::core::js;
+use casas_generator::core::rng::Mulberry32;
 use std::f64::consts::PI;
 
 pub const SEA_DROP_M: f64 = 120.0;
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn the_land_dries_from_the_pole_side_after_step_2s_start() {
-        use casas_engine::climate::koppen::koppen_id;
+        use casas_generator::climate::koppen::koppen_id;
         let t0 = 55_000.0;
         for seed in 0..200 {
             let s = drying_start(seed as f64, t0);

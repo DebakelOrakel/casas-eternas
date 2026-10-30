@@ -10,13 +10,13 @@
 # not shipped with it (internal/modules/jobs, releaseTags).
 #
 # The assets:
-#   casas-incubator-darwin-arm64.node     the incubator's native build on a Mac
-#   casas-incubator-linux-amd64.node      on Linux with glibc (as `make engines`)
-#   casas-incubator-windows-amd64.node    on Windows
-#   casas-engine-<os>-<arch>.node       the engine's, which reads the save and level 1
-#   pipeline.json                       the incubator's version
-#   constants.json                      the tuning the version hashes
-#   pipeline.mjs                        the incubator's module (incubator.mjs); the name the launcher fetches
+#   casas-incubator-darwin-arm64.node      the incubator's native build on a Mac
+#   casas-incubator-linux-amd64.node       on Linux with glibc (as `make engines`)
+#   casas-incubator-windows-amd64.node     on Windows
+#   casas-generator-<os>-<arch>.node       the generator's, which reads the save and level 1
+#   pipeline.json                          the incubator's version
+#   constants.json                         the tuning the version hashes
+#   pipeline.mjs                           the incubator's module (incubator.mjs); the name the launcher fetches
 #   SHA256SUMS
 #
 # No tests here, as in generator-release.yml: `make test` before a tag.
@@ -51,10 +51,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p engine/dist/incubator
-          (cd engine && cargo run --release --locked -q -p casas-engine-api --bin constants > dist/constants.json)
+          (cd engine && cargo run --release --locked -q -p casas-generator-api --bin constants > dist/constants.json)
           (cd engine && cargo run --release --locked -q -p casas-incubator --bin incubator-version > dist/incubator/version.json)
           (cd engine && cargo run --release --locked -q -p casas-incubator --bin incubator-constants > dist/incubator/constants.json)
-          touch engine/dist/casas-engine.node engine/dist/casas-incubator.node
+          touch engine/dist/casas-generator.node engine/dist/casas-incubator.node
           (cd client && npm ci && node scripts/buildWorker.mjs "$RUNNER_TEMP/worker/job-worker.mjs")
           node "$RUNNER_TEMP/worker/job-worker.mjs" --version --pipeline "$RUNNER_TEMP/worker/incubator.mjs" > engine/dist/pipeline.json
           cat engine/dist/pipeline.json
@@ -86,10 +86,10 @@ jobs:
         working-directory: engine
       - name: Build
         working-directory: engine
-        run: cargo build --release --locked -p casas-engine-node -p casas-incubator-node --target aarch64-apple-darwin
+        run: cargo build --release --locked -p casas-generator-node -p casas-incubator-node --target aarch64-apple-darwin
       - run: |
           mkdir -p out
-          cp engine/target/aarch64-apple-darwin/release/libcasas_engine_node.dylib out/casas-engine-darwin-arm64.node
+          cp engine/target/aarch64-apple-darwin/release/libcasas_generator_node.dylib out/casas-generator-darwin-arm64.node
           cp engine/target/aarch64-apple-darwin/release/libcasas_incubator_node.dylib out/casas-incubator-darwin-arm64.node
       - uses: actions/upload-artifact@v4
         with:
@@ -107,10 +107,10 @@ jobs:
         run: |
           docker run --rm --platform linux/amd64 -v "$PWD/engine:/src" -w /src \
             -e RUSTUP_TOOLCHAIN=1.98.1 -e CARGO_TARGET_DIR=/src/target/linux-amd64 \
-            rust:1.98.1-bookworm cargo build --release --locked -p casas-engine-node -p casas-incubator-node
+            rust:1.98.1-bookworm cargo build --release --locked -p casas-generator-node -p casas-incubator-node
       - run: |
           mkdir -p out
-          cp engine/target/linux-amd64/release/libcasas_engine_node.so out/casas-engine-linux-amd64.node
+          cp engine/target/linux-amd64/release/libcasas_generator_node.so out/casas-generator-linux-amd64.node
           cp engine/target/linux-amd64/release/libcasas_incubator_node.so out/casas-incubator-linux-amd64.node
       - uses: actions/upload-artifact@v4
         with:
@@ -129,10 +129,10 @@ jobs:
         working-directory: engine
       - name: Build
         working-directory: engine
-        run: cargo build --release --locked -p casas-engine-node -p casas-incubator-node --target x86_64-pc-windows-msvc
+        run: cargo build --release --locked -p casas-generator-node -p casas-incubator-node --target x86_64-pc-windows-msvc
       - run: |
           mkdir -p out
-          cp engine/target/x86_64-pc-windows-msvc/release/casas_engine_node.dll out/casas-engine-windows-amd64.node
+          cp engine/target/x86_64-pc-windows-msvc/release/casas_generator_node.dll out/casas-generator-windows-amd64.node
           cp engine/target/x86_64-pc-windows-msvc/release/casas_incubator_node.dll out/casas-incubator-windows-amd64.node
       - uses: actions/upload-artifact@v4
         with:

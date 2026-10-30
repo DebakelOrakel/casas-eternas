@@ -7,11 +7,11 @@ use crate::catalog::Niche;
 use crate::habitat::{
     Habitat, SpreadOptions, draw_origins_by_landmass, hash_text, spread_range, trapezoid,
 };
-use casas_engine::climate::biomes::biome;
-use casas_engine::climate::koppen::KOPPEN_CODES;
-use casas_engine::core::det_math::det_exp;
-use casas_engine::core::js;
-use casas_engine::core::rng::Mulberry32;
+use casas_generator::climate::biomes::biome;
+use casas_generator::climate::koppen::KOPPEN_CODES;
+use casas_generator::core::det_math::det_exp;
+use casas_generator::core::js;
+use casas_generator::core::rng::Mulberry32;
 
 // A cell is suitable from this niche on.
 pub const SUITABLE: f64 = 0.3;

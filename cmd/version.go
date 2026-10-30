@@ -61,10 +61,10 @@ const bakerVersionTimeout = 5 * time.Second
 // second format here would be a second surface saying the same thing.
 var VersionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Prints the build, the API version, the bake pipeline and the incubator this binary carries.",
+	Short: "Prints the build, the API version, the generator and the incubator this binary carries.",
 	Long: `Prints what this binary is.
 
-The pipeline version is the one worth reading: artifacts are addressed by it,
+The generator version (the pipeline version) is the one worth reading: artifacts are addressed by it,
 so a bake bundle from a different commit than the client expecting its output
 produces artifacts nobody ever looks for — a failure that is otherwise silent.
 It is read from the job worker bundle itself (jobs.worker), so it says what this
@@ -90,12 +90,12 @@ func RunVersion(cmd *cobra.Command, args []string) error {
 	// The program name as a bare header, then five labelled lines. The build is
 	// labelled like the rest rather than sharing the header's line: it is one
 	// of five versions this binary carries, and singling it out typographically
-	// suggests the others are footnotes — the pipeline and the incubator in
+	// suggests the others are footnotes — the generator and the incubator in
 	// particular are the ones worth reading.
 	fmt.Fprintf(out, "casas-eternas\n")
 	fmt.Fprintf(out, "  binary    %s\n", buildVersion)
 	fmt.Fprintf(out, "  api       %s\n", server.APIPrefix)
-	fmt.Fprintf(out, "  pipeline  %s\n", pipelineLine(cmd))
+	fmt.Fprintf(out, "  generator %s\n", pipelineLine(cmd))
 	fmt.Fprintf(out, "  incubator %s\n", incubatorLine(cmd))
 	fmt.Fprintf(out, "  go        %s %s/%s\n", runtime.Version(), runtime.GOOS, runtime.GOARCH)
 	return nil

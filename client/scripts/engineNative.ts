@@ -93,7 +93,7 @@ export interface NativeEngine extends Engine {
   }
 }
 
-// The build at `path` (`make engine` writes engine/dist/casas-engine.node).
+// The build at `path` (`make engine` writes engine/dist/casas-generator.node).
 export function loadNativeEngine(path: string): NativeEngine {
   return createRequire(import.meta.url)(path) as NativeEngine
 }

@@ -27,8 +27,8 @@
 use crate::catalog::catalog;
 use crate::habitat::{GAME, Habitat, SpreadOptions, spread_range};
 use crate::niche::{BARRIER, SUITABLE, niche_of, range_of};
-use casas_engine::climate::biomes::biome;
-use casas_engine::core::js;
+use casas_generator::climate::biomes::biome;
+use casas_generator::core::js;
 
 /// A layer: one code a cell (0 nothing, 1 suitable but not reached, 2 …
 /// 255 in the range), and its shares of the land.

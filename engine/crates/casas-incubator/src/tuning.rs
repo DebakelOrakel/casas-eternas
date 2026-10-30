@@ -1,5 +1,5 @@
 //! The incubator's tuning and its version, as the engine has them
-//! (`casas_engine_api::pipeline::constants`, world/identity.ts
+//! (`casas_generator_api::pipeline::constants`, world/identity.ts
 //! derivePipelineVersion): every constant a run's numbers depend on, by
 //! module, and the catalog (`data/catalog.json`); the version
 //! `v<INCUBATOR_ALGO_VERSION>-<hash of them>`. A change to a constant or to

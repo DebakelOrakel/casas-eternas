@@ -58,7 +58,7 @@ func jobsAPI(t *testing.T, answers []map[string]int, other string) (string, *ato
 		switch r.PathValue("file") {
 		case "pipeline.mjs":
 			_, _ = w.Write([]byte(other))
-		case "casas-engine-" + runtime.GOOS + "-" + runtime.GOARCH + ".node":
+		case "casas-generator-" + runtime.GOOS + "-" + runtime.GOARCH + ".node":
 			_, _ = w.Write([]byte("an engine"))
 		default:
 			http.NotFound(w, r)
@@ -129,7 +129,7 @@ func TestTheLauncherFetchesAndChecksAPipeline(t *testing.T) {
 	if fetched.Load() != 2 {
 		t.Errorf("%d files fetched, want 2 (the module and the engine, once)", fetched.Load())
 	}
-	if engine, err := os.ReadFile(filepath.Join(cache, "v0-other", "casas-engine.node")); err != nil || string(engine) != "an engine" {
+	if engine, err := os.ReadFile(filepath.Join(cache, "v0-other", "casas-generator.node")); err != nil || string(engine) != "an engine" {
 		t.Errorf("the engine beside the bundle: %q, %v", engine, err)
 	}
 

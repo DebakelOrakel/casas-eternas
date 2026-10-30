@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 // Three bundles (scripts/workerContract.ts): the host, scripts/jobWorker.ts →
 // <outfile>, and the pipeline module, scripts/workerPipeline.ts →
 // pipeline.mjs beside it, which the host loads. The engine's native build
-// goes beside them as casas-engine.node, where the pipeline module loads
+// goes beside them as casas-generator.node, where the pipeline module loads
 // it: engine/dist's, which `make engine` writes. The incubator's module,
 // scripts/incubatorPipeline.ts → incubator.mjs, the route of the incubator's
 // histories, with the incubator's native build beside it as
@@ -36,9 +36,9 @@ const bundle = (entry, out, extra = []) => {
 bundle('scripts/jobWorker.ts', outfile)
 // The engine's constants for the pipeline versions
 // (generator/pipeline/engineConstants.ts).
-bundle('scripts/workerPipeline.ts', join(outdir, 'pipeline.mjs'), ['--alias:casas-engine-constants=../engine/dist/constants.json'])
-bundle('scripts/incubatorPipeline.ts', join(outdir, 'incubator.mjs'), ['--alias:casas-engine-constants=../engine/dist/constants.json', '--alias:casas-incubator-wasm=../engine/dist/incubator'])
-for (const name of ['casas-engine.node', 'casas-incubator.node']) {
+bundle('scripts/workerPipeline.ts', join(outdir, 'pipeline.mjs'), ['--alias:casas-generator-constants=../engine/dist/constants.json'])
+bundle('scripts/incubatorPipeline.ts', join(outdir, 'incubator.mjs'), ['--alias:casas-generator-constants=../engine/dist/constants.json', '--alias:casas-incubator-wasm=../engine/dist/incubator'])
+for (const name of ['casas-generator.node', 'casas-incubator.node']) {
   const build = join(client, '..', 'engine', 'dist', name)
   if (!existsSync(build)) {
     console.error(`${build} is not there: run \`make engine\` first`)

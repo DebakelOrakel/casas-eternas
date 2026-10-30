@@ -1,0 +1,15 @@
+# Hashes of client/src/generator/core/domain.ts, core/field.ts and the field mesh raster readers, for crates/casas-generator/tests/domain.rs.
+# Written by engine/scripts/domainFixture.mjs; do not edit.
+torus_domain 4a63dcbc
+torus_grid_256x128 36127b0a
+torus_grid_63x31 9c7ccf52
+torus_small_domain 95bf3978
+torus_small_grid_64x32 4bb7b830
+sphere_domain af1c1504
+sphere_grid_256x128 1ac07fee
+sphere_grid_64x32 84774e9a
+sphere_scaled_domain 35c3ea1a
+sphere_scaled_grid_32x16 c061948d
+field_reductions 68232788
+torus_raster_readers deb4a4b3
+sphere_raster_readers 4ab7310c

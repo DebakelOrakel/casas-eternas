@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-10-31
+- **changed** Save/Load: the world's details name its generator, no longer its pipeline. `common.world.pipeline`
+
 ## 2026-10-29
 - **fixed** Generator and incubator: a world that cannot be restored ends its load as failed, with the world list behind it, instead of loading for ever. `common.loading.failed`
 - **changed** Generator: the land's overlays follow the drawn coast, and the wind's calm belts are drawn smooth in the generator and the incubator.

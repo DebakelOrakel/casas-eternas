@@ -17,10 +17,10 @@
 //!   not a way (the crossings are the people's, not the trade's).
 
 use crate::habitat::Habitat;
-use casas_engine::climate::biomes::biome;
-use casas_engine::core::det_math::det_exp;
-use casas_engine::core::js;
-use casas_engine::core::min_heap::MinHeap;
+use casas_generator::climate::biomes::biome;
+use casas_generator::core::det_math::det_exp;
+use casas_generator::core::js;
+use casas_generator::core::min_heap::MinHeap;
 
 pub(crate) const WALK_HOURS: f64 = 6.0;
 pub(crate) const RIVER_BOAT_SIZE: f64 = 0.1;

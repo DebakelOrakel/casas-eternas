@@ -40,7 +40,7 @@ evaluated at the resolution one looks at. The engine evaluates it per
 node of a mesh (`prepare_ecology`), so the rule can run on level 1's mesh
 as it is. What is missing are its inputs at level 1's nodes.
 
-How level 1 gets its waters today (`casas-engine-api/src/replay.rs`,
+How level 1 gets its waters today (`casas-generator-api/src/replay.rs`,
 `ReplayRuns::level`): after the last epoch, once, `level_hydrology` on the
 final terrain, its routing and sediment flux, and **the last epoch's
 climate**. The artifact keeps the lakes, the river graph and the river

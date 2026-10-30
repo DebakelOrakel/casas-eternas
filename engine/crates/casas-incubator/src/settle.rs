@@ -40,9 +40,9 @@ use crate::habitat::{ARABLE, CARRYING, FISH, Habitat, PASTURE};
 use crate::log::LogEvent;
 use crate::simulation::{FISH_RICH, SETTLE_AFTER, lifeway};
 use crate::travel::{reset, travel_days, within_days};
-use casas_engine::core::det_math::det_exp;
-use casas_engine::core::js;
-use casas_engine::core::min_heap::MinHeap;
+use casas_generator::core::det_math::det_exp;
+use casas_generator::core::js;
+use casas_generator::core::min_heap::MinHeap;
 use std::collections::HashMap;
 
 // People a km² at the carrying capacity's CARRYING_FULL, by lifeway

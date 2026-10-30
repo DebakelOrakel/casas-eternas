@@ -5,7 +5,7 @@
 // relay, the tokens, the presence, the artifact store and the world over
 // HTTP or a directory, the compute thread. It is always the newest. The
 // pipeline module (workerPipeline.ts → pipeline.mjs, with its engine
-// casas-engine.node beside it; or the incubator's, incubatorPipeline.ts →
+// casas-generator.node beside it; or the incubator's, incubatorPipeline.ts →
 // incubator.mjs) is what a task computes: the save's
 // decoding, the replay, the tile plan and bakes, the artifact formats and
 // their keys. It belongs to one pipeline version and is in that pipeline's

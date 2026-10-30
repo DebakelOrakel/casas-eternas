@@ -70,7 +70,7 @@ client/scripts/.docsite.mjs
 job-worker.mjs
 /pipeline.mjs
 /incubator.mjs
-casas-engine.node
+casas-generator.node
 casas-incubator.node
 
 # Local credentials for development (e.g. the dev object storage key pair).

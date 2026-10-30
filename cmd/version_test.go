@@ -31,7 +31,7 @@ func TestVersionReportsWithoutABaker(t *testing.T) {
 	}
 
 	text := out.String()
-	for _, want := range []string{"casas-eternas", "binary", "api", "/v1", "pipeline", "unknown", "incubator", "go"} {
+	for _, want := range []string{"casas-eternas", "binary", "api", "/v1", "generator", "unknown", "incubator", "go"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("version output missing %q:\n%s", want, text)
 		}

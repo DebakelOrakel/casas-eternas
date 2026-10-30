@@ -26,7 +26,7 @@ import (
 // pipeline than the one it was shipped with. GET
 // /v1/jobs/engines/{pipeline}/{file} answers with a link to the file in the
 // artifact store. On a miss it downloads the file from the release of the
-// pipeline (releaseTags: `engine-<pipeline>`, .github/workflows/
+// pipeline (releaseTags: `generator-<pipeline>`, .github/workflows/
 // generator-release.yml; the incubator's `incubator-<version>`),
 // checks it against the release's SHA256SUMS, and stores it first. A
 // worker never talks to the release's host.
@@ -46,16 +46,16 @@ var ErrNoPipelineFile = errors.New("no such pipeline file")
 
 // releaseFile is what a file of a release may be called: the names the
 // release action gives them.
-var releaseFile = regexp.MustCompile(`^(pipeline\.mjs|casas-(engine|incubator)-[a-z0-9]+-[a-z0-9]+\.node|casas-engine-wasm\.tar\.gz|constants\.json|pipeline\.json)$`)
+var releaseFile = regexp.MustCompile(`^(pipeline\.mjs|casas-(generator|incubator)-[a-z0-9]+-[a-z0-9]+\.node|casas-generator-wasm\.tar\.gz|constants\.json|pipeline\.json)$`)
 
 // releaseTags are the releases a pipeline's files may be in, in the order
-// asked: `engine-<pipeline>`, then `incubator-<pipeline>` — the incubator's
+// asked: `generator-<pipeline>`, then `incubator-<pipeline>` — the incubator's
 // version (casas-incubator incubator_version, the pipeline of its tasks,
 // ScopeHistory) has the form of a pipeline's, and its release
 // (.github/workflows/incubator-release.yml) holds the incubator's native build
 // beside the engine's. The versions are hashes: one names one release.
 func releaseTags(pipeline string) []string {
-	return []string{"engine-" + pipeline, "incubator-" + pipeline}
+	return []string{"generator-" + pipeline, "incubator-" + pipeline}
 }
 
 const (
@@ -134,7 +134,7 @@ func (m *Module) pipelineFileLink(ctx context.Context, pipeline, file string) (s
 	if !errors.Is(err, ErrNoPipelineFile) {
 		return link, err
 	}
-	body, err := fetchReleaseFile(ctx, m.cfg.EngineSource, pipeline, file)
+	body, err := fetchReleaseFile(ctx, m.cfg.GeneratorSource, pipeline, file)
 	if err != nil {
 		return "", err
 	}
@@ -303,7 +303,7 @@ func (h httpPipelineFiles) Put(ctx context.Context, pipeline, file string, body 
 	}
 	meta, _ := json.Marshal(map[string]any{
 		"key":       map[string]string{"worldId": "pipeline", "pipelineVersion": pipeline, "stage": file},
-		"label":     "engine-" + pipeline + " " + file,
+		"label":     "generator-" + pipeline + " " + file,
 		"createdAt": time.Now().UnixMilli(),
 	})
 	for _, part := range []struct {

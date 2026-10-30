@@ -47,7 +47,7 @@ settled picture.
 Where this is going: [docs/design/generator-pipeline.md](../../../docs/design/generator-pipeline.md).
 
 The simulation itself is the engine's: its modules are in
-`engine/crates/casas-engine/src/` under the same directories and the same
+`engine/crates/casas-generator/src/` under the same directories and the same
 names in snake_case (`surface/erosion_engine.rs`, `tectonics/plate_simulation.rs`,
 `climate/refinement.rs` …). What is left here is the generator's transport,
 the read side (decode, sample, rasterise a save or an artifact) and what the
@@ -277,7 +277,7 @@ values against the fdlibm port's, confirmed in both JavaScript engines.
 **The simulation's mechanics are the engine's.** How the erosion routes
 (MFD area, single-flow incision, D8-LTD on a grid), how the history moves,
 rebuilds and compacts the mesh each epoch, and the erosion engine's graph
-index are described where they live: `engine/crates/casas-engine/src/surface/`
+index are described where they live: `engine/crates/casas-generator/src/surface/`
 and `mesh/`, and `docs/decisions/rust-engine.md`.
 
 **The overlay canvas is displayed vertically mirrored.** Draw "up" as `+y`; text

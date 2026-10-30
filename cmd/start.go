@@ -419,12 +419,12 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 		return url, nil
 	}
 	bcfg := jobs.Config{
-		WorkerPath:    workerPath(cfg.Jobs.Worker),
-		Identity:      caller,
-		Tokens:        tokens,
-		MaxConcurrent: cfg.Jobs.MaxConcurrent,
-		ScaleWorkers:  cfg.Jobs.ScaleWorkers,
-		EngineSource:  cfg.Jobs.EngineSource,
+		WorkerPath:      workerPath(cfg.Jobs.Worker),
+		Identity:        caller,
+		Tokens:          tokens,
+		MaxConcurrent:   cfg.Jobs.MaxConcurrent,
+		ScaleWorkers:    cfg.Jobs.ScaleWorkers,
+		GeneratorSource: cfg.Jobs.GeneratorSource,
 	}
 	// The local workers' launcher is this binary (`worker`), and they ask
 	// this server about the work per pipeline. In a cluster the workers are

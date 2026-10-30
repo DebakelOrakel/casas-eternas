@@ -1,0 +1,12 @@
+# Hashes of the erosion forcing (client/src/generator/elevation/upliftField.ts, erodibilityField.ts, surface/erosionForcingFields.ts), for crates/casas-generator/tests/forcing.rs.
+# Written by engine/scripts/forcingFixture.mjs; do not edit.
+torus_uplift 65138529
+torus_erodibility c6021c5b
+torus_coarse 47e66203
+torus_nodes f4d54a7d
+torus_raster 508fedf1
+sphere_uplift 1e1079a3
+sphere_erodibility 34b8be89
+sphere_coarse d8180700
+sphere_nodes fae035d9
+sphere_raster cfef226f

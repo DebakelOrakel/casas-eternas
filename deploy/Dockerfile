@@ -33,7 +33,7 @@
 # wasm-bindgen's CLI is the crates' version (the Makefile's WASM_BINDGEN);
 # RUSTUP_TOOLCHAIN stands for engine/rust-toolchain.toml.
 #
-# /out/dist is what engine/dist holds (casas-engine.node, wasm/,
+# /out/dist is what engine/dist holds (casas-generator.node, wasm/,
 # constants.json, casas-incubator.node, incubator/).
 FROM rust:1.98.1-bookworm AS engine
 ENV RUSTUP_TOOLCHAIN=1.98.1
@@ -42,16 +42,16 @@ RUN rustup target add wasm32-unknown-unknown \
 WORKDIR /src/engine
 COPY engine/Cargo.toml engine/Cargo.lock engine/clippy.toml ./
 COPY engine/crates/ ./crates/
-RUN cargo build --release --locked -p casas-engine-node -p casas-incubator-node \
- && cargo build --release --locked -p casas-engine-wasm -p casas-incubator-wasm --target wasm32-unknown-unknown \
+RUN cargo build --release --locked -p casas-generator-node -p casas-incubator-node \
+ && cargo build --release --locked -p casas-generator-wasm -p casas-incubator-wasm --target wasm32-unknown-unknown \
  && mkdir -p /out/dist/incubator \
- && cp target/release/libcasas_engine_node.so /out/dist/casas-engine.node \
+ && cp target/release/libcasas_generator_node.so /out/dist/casas-generator.node \
  && cp target/release/libcasas_incubator_node.so /out/dist/casas-incubator.node \
- && wasm-bindgen --target web --out-dir /out/dist/wasm --out-name casas-engine \
-      target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm \
+ && wasm-bindgen --target web --out-dir /out/dist/wasm --out-name casas-generator \
+      target/wasm32-unknown-unknown/release/casas_generator_wasm.wasm \
  && wasm-bindgen --target web --out-dir /out/dist/incubator --out-name casas-incubator \
       target/wasm32-unknown-unknown/release/casas_incubator_wasm.wasm \
- && cargo run --release --locked -q -p casas-engine-api --bin constants > /out/dist/constants.json \
+ && cargo run --release --locked -q -p casas-generator-api --bin constants > /out/dist/constants.json \
  && cargo run --release --locked -q -p casas-incubator --bin incubator-version > /out/dist/incubator/version.json \
  && cargo run --release --locked -q -p casas-incubator --bin incubator-constants > /out/dist/incubator/constants.json
 
@@ -121,7 +121,7 @@ WORKDIR /app
 COPY --from=server /out/casas-eternas /app/casas-eternas
 COPY --from=web    /app/job-worker.mjs /app/job-worker.mjs
 COPY --from=web    /app/pipeline.mjs /app/pipeline.mjs
-COPY --from=web    /app/casas-engine.node /app/casas-engine.node
+COPY --from=web    /app/casas-generator.node /app/casas-generator.node
 COPY --from=web    /app/incubator.mjs /app/incubator.mjs
 COPY --from=web    /app/casas-incubator.node /app/casas-incubator.node
 COPY --from=web    /app/client/dist   /app/dist

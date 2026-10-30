@@ -34,16 +34,16 @@ func (s *memoryPipelineFiles) Put(_ context.Context, pipeline, file string, body
 	return nil
 }
 
-// releaseHost serves the release engine-<testPipeline> with one file, and
+// releaseHost serves the release generator-<testPipeline> with one file, and
 // counts the downloads of that file. `sums` is its SHA256SUMS.
 func releaseHost(t *testing.T, body []byte, sums string) (string, *atomic.Int32) {
 	t.Helper()
 	downloads := &atomic.Int32{}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /engine-"+testPipeline+"/SHA256SUMS", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /generator-"+testPipeline+"/SHA256SUMS", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(sums))
 	})
-	mux.HandleFunc("GET /engine-"+testPipeline+"/pipeline.mjs", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /generator-"+testPipeline+"/pipeline.mjs", func(w http.ResponseWriter, _ *http.Request) {
 		downloads.Add(1)
 		_, _ = w.Write(body)
 	})
@@ -68,7 +68,7 @@ func TestEngineFilesComeFromTheRelease(t *testing.T) {
 	sum := sha256.Sum256(body)
 	source, downloads := releaseHost(t, body, hex.EncodeToString(sum[:])+"  pipeline.mjs\n")
 	store := &memoryPipelineFiles{files: map[string][]byte{}}
-	m := &Module{cfg: Config{EngineSource: source, PipelineFiles: store}}
+	m := &Module{cfg: Config{GeneratorSource: source, PipelineFiles: store}}
 
 	for range 2 {
 		got := getEngineFile(m, testPipeline, "pipeline.mjs")
@@ -88,7 +88,7 @@ func TestEngineFilesAreRefused(t *testing.T) {
 	body := []byte("the module")
 	source, _ := releaseHost(t, body, "0000  pipeline.mjs\n")
 	store := &memoryPipelineFiles{files: map[string][]byte{}}
-	m := &Module{cfg: Config{EngineSource: source, PipelineFiles: store}}
+	m := &Module{cfg: Config{GeneratorSource: source, PipelineFiles: store}}
 	cases := []struct {
 		pipeline, file string
 		want           int
@@ -96,7 +96,7 @@ func TestEngineFilesAreRefused(t *testing.T) {
 		// Not the release's checksum: nothing stored.
 		{testPipeline, "pipeline.mjs", http.StatusBadGateway},
 		// Not in the release's SHA256SUMS.
-		{testPipeline, "casas-engine-linux-amd64.node", http.StatusNotFound},
+		{testPipeline, "casas-generator-linux-amd64.node", http.StatusNotFound},
 		// No such release.
 		{"v0-none", "pipeline.mjs", http.StatusNotFound},
 		// Not a file of a release.
@@ -112,7 +112,7 @@ func TestEngineFilesAreRefused(t *testing.T) {
 		t.Errorf("stored %d files, want none", len(store.files))
 	}
 	// Without the artifacts target in this process.
-	if got := getEngineFile(&Module{cfg: Config{EngineSource: source}}, testPipeline, "pipeline.mjs").Code; got != http.StatusServiceUnavailable {
+	if got := getEngineFile(&Module{cfg: Config{GeneratorSource: source}}, testPipeline, "pipeline.mjs").Code; got != http.StatusServiceUnavailable {
 		t.Errorf("without a store = %d, want 503", got)
 	}
 }
@@ -130,7 +130,7 @@ func TestEngineReadsNeedNoCaller(t *testing.T) {
 }
 
 // The incubator's version has its own release, with the incubator's native
-// build in it: a file not in `engine-<version>` is looked for in
+// build in it: a file not in `generator-<version>` is looked for in
 // `incubator-<version>`.
 func TestTheIncubatorHasItsOwnRelease(t *testing.T) {
 	body := []byte("the incubator's module")

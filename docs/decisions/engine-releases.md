@@ -15,7 +15,7 @@ summary.de: Jede Pipeline ist ein eigenes GitHub-Release, getaggt mit der
 area: platform
 stage: built
 createdAt: 2026-10-22
-updatedAt: 2026-10-27
+updatedAt: 2026-10-31
 related: [DEC-0044, DEC-0039, DEC-0043, DEC-0038]
 ---
 
@@ -25,7 +25,7 @@ related: [DEC-0044, DEC-0039, DEC-0043, DEC-0038]
 was a worker image per pipeline. Two facts since then change the frame:
 
 - The engine has a release action (`.github/workflows/generator-release.yml`,
-  2026-10-22). A tag that starts with `engine` builds the native engine for
+  2026-10-22). A tag that starts with `generator` builds the native engine for
   darwin/arm64, linux/amd64 and windows/amd64 and the WASM build, and
   makes a GitHub release. It runs no tests since 2026-10-22: `make test`
   runs them before a tag.
@@ -38,7 +38,7 @@ Today each mode takes the engine from one place:
 | Mode | The engine |
 |---|---|
 | Development (`npm run dev`, `make run`) | `engine/dist`, built from the source |
-| Release archive (`make release`) | `casas-engine.node` beside `job-worker.mjs`, from `make engines` |
+| Release archive (`make release`) | `casas-generator.node` beside `job-worker.mjs`, from `make engines` |
 | Container image (Helm) | built in the image, stage 0, for musl |
 | External workers (Helm, `workers` only) | the same image |
 | Browser (the generator) | WASM, in the client bundle |
@@ -48,7 +48,8 @@ the job fails (DEC-0044, "Not decided — versioned pipelines").
 
 ## Fork 1 — the version that names a release
 
-**Decided 2026-10-22: the tag is `engine-` and `status.pipeline`.**
+**Decided 2026-10-22: the tag is `generator-` and `status.pipeline`.**
+(The prefix was `engine-` until 2026-10-31.)
 
 `status.pipeline` is what world.yaml records (`WORLD_PIPELINE`,
 world/worldPipeline.ts), so a save names the release of the engine that
@@ -104,8 +105,8 @@ beside the bundle, so its workers ask for none.
 **Decided 2026-10-22: the pipeline module and the engines.**
 
 `pipeline.mjs`, the job worker's pipeline module (one file for every
-platform; see "The host and the pipeline"), `casas-engine-<os>-<arch>.node`
-for each platform, `casas-engine-wasm.tar.gz`, `constants.json`,
+platform; see "The host and the pipeline"), `casas-generator-<os>-<arch>.node`
+for each platform, `casas-generator-wasm.tar.gz`, `constants.json`,
 `pipeline.json`, `SHA256SUMS`. When the read side moves into the engine
 (DEC-0044, fork 7b), the module stays in the release; it is then thin.
 Until 2026-10-22 the release held the whole bundle, `job-worker.mjs`.
@@ -123,7 +124,7 @@ store, or on a miss from the GitHub release, checks them against
 How (built 2026-10-22): `GET /v1/jobs/engines/{pipeline}/{file}`, in the
 jobs module, `{file}` a release file's name. It answers 302 to a read link
 of the artifact store; on a miss it first downloads the file from
-`jobs.engine-source` (default the GitHub releases), checks it, and stores
+`jobs.generator-source` (default the GitHub releases), checks it, and stores
 it. In the store a release file is one artifact: `worldId` `pipeline`
 (`artifacts.PipelineWorld`), `pipelineVersion` the pipeline, `stage` the
 file's name. Such an artifact belongs to no world, so it has rules of its
@@ -185,7 +186,7 @@ incubator's version (`v<n>-<hash>`, a pipeline's form) as their pipeline,
 and `GET /v1/jobs/pipelines` names them (`incubators`). The launcher serves
 one after its own pipeline, by `incubator.mjs` beside the host, else from
 the release `incubator-<version>` (`releaseTags`: a file is looked for in
-`engine-<version>` first), which holds the incubator's native build
+`generator-<version>` first), which holds the incubator's native build
 (`casas-incubator-<os>-<arch>.node`) beside the engine's.
 
 ## The host and the pipeline
@@ -208,7 +209,7 @@ So the bundle is two (client/scripts/workerContract.ts):
   one beside it or the one `--pipeline` names, and gives each task its io:
   the world's archive, the artifact store, the progress, whether to cache.
 - `pipeline.mjs`, the PIPELINE MODULE (workerPipeline.ts), its engine
-  `casas-engine.node` beside it: what a task computes, for one pipeline.
+  `casas-generator.node` beside it: what a task computes, for one pipeline.
   It exports `contract`, `version` and `runTask(task, io)`. It talks to no
   relay and no server itself, and the host imports nothing of it.
 - The CONTRACT between them, `WORKER_CONTRACT` (1): the types of

@@ -70,10 +70,10 @@ use crate::habitat::{Habitat, km_between};
 use crate::log::LogEvent;
 use crate::peopling::{Peopling, branches_of};
 use crate::simulation::PEOPLE_FRAME_STEP;
-use casas_engine::core::det_math::{det_cos, det_exp, det_log};
-use casas_engine::core::js;
-use casas_engine::core::min_heap::MinHeap;
-use casas_engine::core::rng::Mulberry32;
+use casas_generator::core::det_math::{det_cos, det_exp, det_log};
+use casas_generator::core::js;
+use casas_generator::core::min_heap::MinHeap;
+use casas_generator::core::rng::Mulberry32;
 use std::f64::consts::PI;
 
 /// The traits a cell carries.

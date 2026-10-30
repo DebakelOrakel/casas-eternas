@@ -55,12 +55,12 @@ use crate::peoples::{Traits, Tree};
 use crate::peopling::Peopling;
 use crate::settle::{Goods, settle_history};
 use crate::travel::{reset, travel_days, within_days};
-use casas_engine::climate::biomes::biome;
-use casas_engine::core::det_math::{det_cos, det_exp, det_log};
-use casas_engine::core::js;
-use casas_engine::core::min_heap::MinHeap;
-use casas_engine::core::rng::Mulberry32;
-use casas_engine::ecology::ecology_tune_params::ECOLOGY_TUNING;
+use casas_generator::climate::biomes::biome;
+use casas_generator::core::det_math::{det_cos, det_exp, det_log};
+use casas_generator::core::js;
+use casas_generator::core::min_heap::MinHeap;
+use casas_generator::core::rng::Mulberry32;
+use casas_generator::ecology::ecology_tune_params::ECOLOGY_TUNING;
 use std::collections::{HashMap, HashSet};
 use std::f64::consts::{LN_10, PI};
 
@@ -493,7 +493,7 @@ pub struct BigGame<'a> {
     pub vulnerability: f64,
 }
 
-/// The rain's reliability per cell (the save's, casas-engine's
+/// The rain's reliability per cell (the save's, casas-generator's
 /// climate/reliability.rs): the annual rain's coefficient of variation, the
 /// ENSO see-saw's mark (−1 drier in its warm phase … +1), the see-saw's
 /// strength (0 … 1).

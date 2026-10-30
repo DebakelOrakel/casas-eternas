@@ -232,7 +232,7 @@ error was 1.1 steps on the mean and 2 steps at most (the move reversed).
 At 17.6° the error was 0.4 steps, at 70° 0.04. Now every blob moves
 toward the centre. The effect on the sphere's worlds was measured with
 the fix (land after 40 Archean epochs 28.0 → 26.2 %, plates 13.5 → 12).
-Regression test: `engine/crates/casas-engine/tests/compaction.rs`
+Regression test: `engine/crates/casas-generator/tests/compaction.rs`
 (fails on the old formula). No world output changes now.
 
 2026-10-28: the generator's migration step is removed (DEC-0010 is

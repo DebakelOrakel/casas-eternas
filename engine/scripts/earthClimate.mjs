@@ -76,7 +76,7 @@ const M = {
   koppen: await L('/src/generator/climate/koppen.ts'),
   scale: await L('/src/generator/elevation/elevationScale.ts'),
 }
-const native = (await L('/scripts/engineNative.ts')).loadNativeEngine(fileURLToPath(new URL('../dist/casas-engine.node', import.meta.url)))
+const native = (await L('/scripts/engineNative.ts')).loadNativeEngine(fileURLToPath(new URL('../dist/casas-generator.node', import.meta.url)))
 await server.close()
 
 // --- the heightmap -----------------------------------------------------------

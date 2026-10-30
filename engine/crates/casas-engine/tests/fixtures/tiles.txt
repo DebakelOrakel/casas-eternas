@@ -1,9 +1,0 @@
-# Hashes of client/src/generator/mesh/cubeAtlas.ts, meshTile.ts, meshTileCube.ts, tileLayout.ts and pipeline/tilePlan.ts, meshTileBake.ts, for crates/casas-engine/tests/tiles.rs.
-# Written by engine/scripts/tilesFixture.mjs; do not edit.
-atlas 6c253a25
-torus_plan d0c21e1d
-torus_level2 a90ce055
-torus_level3 280e0ac2
-sphere_plan e1c9f7d5
-sphere_level2 0caed290
-sphere_level3 fca3ffb7

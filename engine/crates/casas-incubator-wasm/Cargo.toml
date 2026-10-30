@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 casas-incubator = { path = "../casas-incubator" }
-# The engine's pins (casas-engine-wasm/Cargo.toml): `make engine` runs one
+# The engine's pins (casas-generator-wasm/Cargo.toml): `make engine` runs one
 # wasm-bindgen CLI over both builds.
 wasm-bindgen = "=0.2.129"
 js-sys = "=0.3.106"

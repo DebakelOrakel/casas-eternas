@@ -136,10 +136,10 @@ type Config struct {
 	// (`…/v1`).
 	Launcher string
 	LocalAPI string
-	// EngineSource is where the pipelines' releases are
-	// (jobs.engine-source): a file of a release is
-	// <EngineSource>/engine-<pipeline>/<file> (engines.go).
-	EngineSource string
+	// GeneratorSource is where the pipelines' releases are
+	// (jobs.generator-source): a file of a release is
+	// <GeneratorSource>/generator-<pipeline>/<file> (engines.go).
+	GeneratorSource string
 	// PipelineFiles keeps the files of the pipelines' releases in the
 	// artifact store: composed by cmd/ over a co-resident artifacts module.
 	// Nil: over ArtifactsURL, with the module's own credential (engines.go,

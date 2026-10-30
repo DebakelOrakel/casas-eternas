@@ -1,0 +1,6 @@
+# Hashes of client/src/generator/crust/raftField.ts and mantle/mantleField.ts, for crates/casas-generator/tests/mantle.rs.
+# Written by engine/scripts/mantleFixture.mjs; do not edit.
+torus_raft_field a5d95f4c
+torus_mantle 389f586b
+sphere_raft_field c5e04127
+sphere_mantle 8f549408

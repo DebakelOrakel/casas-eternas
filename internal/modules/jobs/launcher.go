@@ -43,7 +43,7 @@ import (
 // LauncherConfig is what the launcher runs with.
 type LauncherConfig struct {
 	// The shipped bundle (jobs.worker), the host; its pipeline module
-	// (pipeline.mjs) and engine (casas-engine.node) beside it.
+	// (pipeline.mjs) and engine (casas-generator.node) beside it.
 	Bundle string
 	// Where the pipeline modules and engines of other pipelines are kept,
 	// one directory per pipeline.
@@ -178,7 +178,7 @@ func pipelineModule(ctx context.Context, serve serveConfig, cacheDir, bundle, pi
 	module := filepath.Join(dir, "pipeline.mjs")
 	files := map[string]string{
 		"pipeline.mjs": module,
-		"casas-engine-" + runtime.GOOS + "-" + runtime.GOARCH + ".node": filepath.Join(dir, "casas-engine.node"),
+		"casas-generator-" + runtime.GOOS + "-" + runtime.GOARCH + ".node": filepath.Join(dir, "casas-generator.node"),
 	}
 	if isIncubator {
 		files["casas-incubator-"+runtime.GOOS+"-"+runtime.GOARCH+".node"] = filepath.Join(dir, "casas-incubator.node")

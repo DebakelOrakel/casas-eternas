@@ -27,20 +27,22 @@
 //! Float32Array holds as a float: every `as f32` here is such a store,
 //! every read of one `as f64` (docs/decisions/incubator-history-engine.md, the way there 2).
 
-use casas_engine::climate::biomes::biome;
-use casas_engine::climate::climate_field::{latitude_of_norm, shifted_norm};
-use casas_engine::core::det_math::{det_acos, det_cos, det_hypot, det_sin};
-use casas_engine::core::domain::Domain;
-use casas_engine::core::js;
-use casas_engine::core::min_heap::MinHeap;
-use casas_engine::core::rng::Mulberry32;
-use casas_engine::ecology::ecology_field::{ECOLOGY_FINE_OCEAN, decode_fine_value};
-use casas_engine::elevation::elevation_scale::ELEVATION_METERS;
-use casas_engine::fields::field_mesh::{create_field_mesh_as, create_field_sampler, raster_owners};
-use casas_engine::surface::hydrology::{RIVER_MAX_WIDTH, RIVER_MIN_WIDTH};
+use casas_generator::climate::biomes::biome;
+use casas_generator::climate::climate_field::{latitude_of_norm, shifted_norm};
+use casas_generator::core::det_math::{det_acos, det_cos, det_hypot, det_sin};
+use casas_generator::core::domain::Domain;
+use casas_generator::core::js;
+use casas_generator::core::min_heap::MinHeap;
+use casas_generator::core::rng::Mulberry32;
+use casas_generator::ecology::ecology_field::{ECOLOGY_FINE_OCEAN, decode_fine_value};
+use casas_generator::elevation::elevation_scale::ELEVATION_METERS;
+use casas_generator::fields::field_mesh::{
+    create_field_mesh_as, create_field_sampler, raster_owners,
+};
+use casas_generator::surface::hydrology::{RIVER_MAX_WIDTH, RIVER_MIN_WIDTH};
 
 pub const CELL_SPACING_KM: f64 = 10.0;
-/// `RiverRegime::Ephemeral.code()` (casas-engine surface/river_graph.rs).
+/// `RiverRegime::Ephemeral.code()` (casas-generator surface/river_graph.rs).
 pub(crate) const RIVER_EPHEMERAL: u8 = 2;
 
 /// The ecology's fields a cell takes, in this order (the client's
@@ -500,7 +502,7 @@ pub fn trapezoid(v: f64, t: &Trapezoid) -> f64 {
 }
 
 /// FNV-1a over a text's UTF-16 units.
-pub use casas_engine::core::rng::hash_seed_string as hash_text;
+pub use casas_generator::core::rng::hash_seed_string as hash_text;
 
 /// One origin on each landmass the niche suits somewhere, with its
 /// `chance`: drawn there by the niche to

@@ -1,0 +1,10 @@
+# Hashes of client/src/generator/elevation/, tectonics/trench.ts and folds.ts, for crates/casas-generator/tests/elevation.rs.
+# Written by the TypeScript engine, recorded from this one since DEC-0049 (tests/fixture/); do not edit.
+scale ab7ea84c
+torus_noise 01c91b9d
+sphere_noise aec48210
+torus_features c6ac2489
+torus_baseline 6079c4c8
+sphere_features 4e158f3a
+sphere_baseline 920936d5
+redistribution bb4a2133

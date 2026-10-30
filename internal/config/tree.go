@@ -270,9 +270,9 @@ type JobsConfig struct {
 	// (docs/decisions/helm-chart.md, fork 3).
 	ScaleWorkers bool `mapstructure:"scale-workers"`
 	// Where the pipelines' releases are: a release's file is
-	// <engine-source>/engine-<pipeline>/<file>
+	// <generator-source>/generator-<pipeline>/<file>
 	// (docs/decisions/engine-releases.md).
-	EngineSource string `mapstructure:"engine-source"`
+	GeneratorSource string `mapstructure:"generator-source"`
 }
 
 // ClientConfig is the client module's section: the built bundle it serves.

@@ -46,7 +46,7 @@ the terrain (worldId); level 1's pipeline version and the incubator's,
 The incubator's version is made as the pipeline's (2026-10-27, after a
 string raised by hand): `v<INCUBATOR_ALGO_VERSION>-<hash>`, the hash over
 the crate's tuning (`casas-incubator` `tuning.rs`, a table of its
-constants by module, as `casas_engine_api::pipeline::constants`, and the
+constants by module, as `casas_generator_api::pipeline::constants`, and the
 catalog without its notes; `make engine` writes it to
 `engine/dist/incubator/constants.json`). A test keeps the table whole: each
 constant of the crate is in it or named as format. The number is raised by
@@ -58,7 +58,7 @@ was considered and left: in German it names the Sturmabteilung.
 
 ## Fork 2 — where its code lives: DECIDED — a crate of its own
 
-- **A. In `casas-engine`.** Shares the mesh, detMath and the heap without a
+- **A. In `casas-generator`.** Shares the mesh, detMath and the heap without a
   seam. But the generator's engine is frozen, and its releases are tied to
   the pipeline a save records ([DEC-0045](./engine-releases.md)): an engine
   under a pipeline's tag must not change. The history changes all the time;
@@ -124,7 +124,7 @@ the subject names it, and a worker serves one pipeline's module.
   `H1:<cell>:r<km>:s<m>`.
   The version has a pipeline's form, so the server says which pipelines
   are the incubator's (`GET /v1/jobs/pipelines`, `incubators`: those of
-  open history jobs), and a file of a pipeline comes from `engine-<version>`,
+  open history jobs), and a file of a pipeline comes from `generator-<version>`,
   else from `incubator-<version>`.
 
 H1 is keyed by the level read (its pipeline version, `+`,

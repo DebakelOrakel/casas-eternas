@@ -1,0 +1,23 @@
+# Hashes of client/src/generator/mesh/ and core/rng.ts, for crates/casas-generator/tests/mesh.rs.
+# Written by engine/scripts/meshFixture.mjs, recorded from this engine since TEG-115 (tests/fixture/); do not edit.
+mulberry32 133abb6d
+hilbert_key c8de1c78
+hilbert_order 1d10a505
+target_spacing 83d38e68
+hex_lattice 776a6c73
+geodesic_lattice 5cf75cf1
+centroidal_lattice 02705192
+torus_build 9cef03ad
+torus_triangulate aafc8357
+torus_remesh e15234ea
+torus_geometry b2bfbbed
+torus_neighbourhoods cf2a7860
+torus_around d0dc952e
+torus_engine_index 0458b22d
+sphere_build 966cdb24
+sphere_triangulate e0a4b937
+sphere_remesh a1861432
+sphere_geometry fb5d151a
+sphere_neighbourhoods 22271cec
+sphere_around 3dda32f6
+sphere_engine_index aedf3d19

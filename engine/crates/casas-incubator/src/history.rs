@@ -10,8 +10,8 @@ use crate::flora::Layer as Grown;
 use crate::habitat::{CARRYING, Habitat};
 use crate::peopling::{Controls, people};
 use crate::simulation::{BigGame, Layer, Rain, SimulationInput, SimulationResult, simulate};
-use casas_engine::climate::biomes::biome;
-use casas_engine::climate::koppen::KOPPEN_CODES;
+use casas_generator::climate::biomes::biome;
+use casas_generator::climate::koppen::KOPPEN_CODES;
 
 /// The rain's reliability charted (map/refinedLayers.ts): a raster of
 /// `width` × `height` over the world.
