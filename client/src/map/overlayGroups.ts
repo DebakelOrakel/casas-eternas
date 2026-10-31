@@ -138,7 +138,7 @@ export const OVERLAY_GROUPS: readonly OverlayGroup[] = [
       { id: 'settle:groups', helpBase: 'incubator.peopling.groups', icon: '/icons/lineage.png' },
       { id: 'settle:peoples', helpBase: 'incubator.people.peoples', icon: '/icons/group.png' },
       // No icon of its own yet: the names' (TEG-148).
-      { id: 'settle:languages', helpBase: 'incubator.peopling.languages', icon: '/icons/continent_name.png' },
+      { id: 'settle:languages', helpBase: 'incubator.peopling.languages', icon: '/icons/language.png' },
       { id: 'settle:lifeway', helpBase: 'incubator.people.lifeway', icon: '/icons/pastures.png' },
       { id: 'settle:density', helpBase: 'incubator.people.density', icon: '/icons/population.png' },
     ],
