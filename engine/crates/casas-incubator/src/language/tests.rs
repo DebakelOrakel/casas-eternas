@@ -408,6 +408,25 @@ fn the_notation_reads_the_class_letters() {
     assert!(sound_in(k, &s, k.sound("ɲ").unwrap()));
 }
 
+// `Change::may_change` says no only where the change leaves the word as
+// it is (TEG-138: the tree's draw of a change skips those words).
+#[test]
+fn a_change_changes_only_words_it_may_change() {
+    for seed in 0..60 {
+        let lang = Language::proto(seed);
+        for (_, w) in lang.lexicon() {
+            for c in changes() {
+                for k in 0..c.choices() {
+                    let c = c.with_choice(k);
+                    if apply_change(&c, w).sounds != w.sounds {
+                        assert!(c.may_change(&w.sounds), "{} on {}", c.id, ipa(&w.sounds));
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[test]
 #[ignore]
 fn print_samples() {

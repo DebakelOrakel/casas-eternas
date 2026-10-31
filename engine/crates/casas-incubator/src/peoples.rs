@@ -76,6 +76,7 @@
 //!   5 000 years; some 45, the groups and the landmasses.
 
 use crate::habitat::{Habitat, km_between};
+use crate::languages::LANGUAGE_APART_YEARS;
 use crate::log::LogEvent;
 use crate::peopling::{Peopling, branches_of};
 use crate::simulation::{CLIMATE_YEARS, PEOPLE_FRAME_STEP};
@@ -1282,6 +1283,16 @@ pub struct People {
     /// Its measures at the kept states it is seen at. A people born and
     /// ended between two kept states has none.
     pub frames: Vec<PeopleFrame>,
+    /// For THE LANGUAGES (languages.rs, TEG-138), not packed: its largest
+    /// share of the km² lived in at a tree step where it was big (0 for
+    /// one never big); its heart at the last tree step it was seen at; its
+    /// heart at the first tree step LANGUAGE_APART_YEARS or more after its
+    /// birth (-1 for one that did not live so long); where it ended as at
+    /// a merge, whether THE WAVES displaced it (as `PeopleReplaced`).
+    pub share: f64,
+    pub heart: i32,
+    pub heart_apart: i32,
+    pub replaced: bool,
 }
 
 // A people's measure at a tree step.
@@ -1564,10 +1575,17 @@ impl Tree {
                 }
             })
             .collect();
+        let lived: f64 = now.iter().map(|m| m.km2).sum();
         for q in 0..count {
             let m = &now[q];
+            let p = &mut self.peoples[ids[q] as usize];
             if big(m) {
-                self.peoples[ids[q] as usize].big = true;
+                p.big = true;
+                p.share = js::max(p.share, m.km2 / lived);
+            }
+            p.heart = m.centre;
+            if p.heart_apart < 0 && t - p.born >= LANGUAGE_APART_YEARS {
+                p.heart_apart = m.centre;
             }
             if keep {
                 self.peoples[ids[q] as usize].frames.push(PeopleFrame {
@@ -1589,6 +1607,12 @@ impl Tree {
             .iter()
             .map(|&q| if q < 0 { -1 } else { ids[q as usize] })
             .collect();
+        for &p in &before {
+            let p = p as usize;
+            if self.peoples[p].ended == t && self.peoples[p].merged_into >= 0 {
+                self.peoples[p].replaced = displaced[p];
+            }
+        }
         self.tell(&before, old, &ids, &now, &of_cell, &displaced, t, log);
         let mut out = Vec::new();
         for i in 0..n {
@@ -2030,6 +2054,10 @@ fn match_overlap(
             merged_into: -1,
             big: false,
             frames: Vec::new(),
+            share: 0.0,
+            heart: -1,
+            heart_apart: -1,
+            replaced: false,
         });
     }
     for &p in alive.iter() {

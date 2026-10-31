@@ -9,6 +9,7 @@ use casas_incubator::climate_history::{ClimateHistory, ICE_REACH_KM, SEA_DROP_M,
 use casas_incubator::flora::{Layer, grow_flora, populate};
 use casas_incubator::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
 use casas_incubator::history::{RainChart, carrying_of, origin_of, run_history};
+use casas_incubator::languages::{Languages, Packed, PeopleInput, tree_json};
 use casas_incubator::log::LogEvent;
 use casas_incubator::pack::{pack_history, pack_settled};
 use casas_incubator::peopling::{Controls, Peopling, people};
@@ -50,6 +51,93 @@ pub fn sea_drop_m() -> f64 {
 #[wasm_bindgen(js_name = languageSample)]
 pub fn language_sample(seed: u32) -> String {
     casas_incubator::language::sample(seed).to_string()
+}
+
+/// THE LANGUAGES' view (casas_incubator::languages, TEG-138) of a history's
+/// packed tree (pack.rs: `peopleLanguage`, then the `language…` arrays by
+/// node, by change, by word), for the languages window: JSON, by node its
+/// name and what the window shows of a language, by people its name
+/// (`Languages::view`; not a format).
+#[wasm_bindgen(js_name = languageView)]
+#[allow(clippy::too_many_arguments)]
+pub fn language_view(
+    people_language: &[i32],
+    parent: &[i32],
+    level: &[u8],
+    people: &[i32],
+    from: &[f32],
+    at: &[f32],
+    until: &[f32],
+    seed: &[i32],
+    style: &[u8],
+    change_start: &[i32],
+    change_year: &[u16],
+    change: &[u8],
+    change_choice: &[u8],
+    word_start: &[i32],
+    word_year: &[u16],
+    word_meaning: &[u8],
+) -> Result<String, JsError> {
+    let packed = Packed {
+        people_language: people_language.to_vec(),
+        parent: parent.to_vec(),
+        level: level.to_vec(),
+        people: people.to_vec(),
+        from: from.to_vec(),
+        at: at.to_vec(),
+        until: until.to_vec(),
+        seed: seed.to_vec(),
+        style: style.to_vec(),
+        change_start: change_start.to_vec(),
+        change_year: change_year.to_vec(),
+        change: change.to_vec(),
+        change_choice: change_choice.to_vec(),
+        word_start: word_start.to_vec(),
+        word_year: word_year.to_vec(),
+        word_meaning: word_meaning.to_vec(),
+        description: String::new(),
+    };
+    let tree = Languages::unpack(&packed).map_err(|e| JsError::new(&e))?;
+    Ok(tree.view().to_string())
+}
+
+/// THE LANGUAGES' tree of peoples given as arrays, by people id (peoples.rs
+/// `People`; `share`, `heart`, `heartApart` and `replaced` as the history
+/// keeps them): the packed arrays and the events, as JSON. For the
+/// languages harness (client/scripts/languageView.mjs), which makes its
+/// peoples itself.
+#[wasm_bindgen(js_name = languagesOfPeoples)]
+#[allow(clippy::too_many_arguments)]
+pub fn languages_of_peoples(
+    parent: &[i32],
+    group: &[i32],
+    born: &[f64],
+    ended: &[f64],
+    merged_into: &[i32],
+    big: &[u8],
+    share: &[f64],
+    replaced: &[u8],
+    heart: &[i32],
+    heart_apart: &[i32],
+    seed: f64,
+    start: f64,
+    end: f64,
+) -> String {
+    let peoples: Vec<PeopleInput> = (0..parent.len())
+        .map(|p| PeopleInput {
+            parent: parent[p],
+            group: group[p],
+            born: born[p],
+            ended: ended[p],
+            merged_into: merged_into[p],
+            big: big[p] != 0,
+            share: share[p],
+            replaced: replaced[p] != 0,
+            heart: heart[p],
+            heart_apart: heart_apart[p],
+        })
+        .collect();
+    tree_json(&peoples, seed, start, end)
 }
 
 // Step 1's controls, each its default where not given.

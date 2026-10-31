@@ -15,6 +15,7 @@ pub mod flora;
 pub mod habitat;
 pub mod history;
 pub mod language;
+pub mod languages;
 pub mod log;
 pub mod niche;
 pub mod pack;

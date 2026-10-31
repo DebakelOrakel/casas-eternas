@@ -15,12 +15,13 @@
 //! - THE SPELLING (`spelling.rs`): a style of spelling.json, sounds to
 //!   letters.
 //! - THE SOUND CHANGES (`change.rs`): a template of changes.json applied
-//!   to one word. The tree of the languages (TEG-138) chains them.
+//!   to one word, and to a whole language (`Language::sound_change`). The
+//!   tree of the languages (languages.rs, TEG-138) chains them.
 //!
 //! Every draw comes from hashes of the seed and of ids, in integers
 //! (`draw.rs`): the native and the WASM builds give the same language.
-//! Nothing in the history (H1) uses the languages yet, so the kit is not
-//! part of the incubator's version (tuning.rs).
+//! Since TEG-138 the history (H1) makes the languages' tree, so the kit
+//! and these constants are part of the incubator's version (tuning.rs).
 
 mod change;
 mod draw;
@@ -34,13 +35,16 @@ mod syllable;
 mod tests;
 
 pub use change::{Change, apply_change, change, changes};
-pub use inventory::{Inventory, Stress};
-pub use kit::{Kit, Sound, kit};
-pub use names::{Compounding, Ending, Grammar, Joiner, Kind, NameRecipe, Slot};
+pub use draw::{Draw, mix, seed_of};
+pub use inventory::{IMPLICATION_ROUNDS, Inventory, Stress};
+pub use kit::{Kit, Sound, kit, weight};
+pub use names::{
+    Compounding, ENDING_TRIES, Ending, Grammar, JOINER_ALWAYS, Joiner, Kind, NameRecipe,
+    PEOPLE_PREFIX, Slot,
+};
 pub use spelling::Spelling;
-pub use syllable::Phonotactics;
+pub use syllable::{Phonotactics, WORD_LENGTH_LONG, WORD_LENGTH_SHIFT, WORD_LENGTH_SHORT};
 
-use draw::Draw;
 use serde_json::{Value, json};
 
 /// The share of the meanings that are not core which a proto-language has
@@ -175,6 +179,93 @@ impl Language {
     /// True when the syllable rules of the language allow the word.
     pub fn pronounceable(&self, word: &[Phoneme]) -> bool {
         self.syllables.pronounceable(kit(), word)
+    }
+
+    /// The lexicon: each meaning and its word, in the order of
+    /// meanings.json.
+    pub fn lexicon(&self) -> &[(String, Word)] {
+        &self.lexicon
+    }
+
+    /// Gives a meaning of the lexicon a new word. A meaning the lexicon
+    /// has no word for stays without one.
+    pub fn set_word(&mut self, meaning: &str, word: Word) {
+        if let Some(entry) = self.lexicon.iter_mut().find(|(m, _)| m == meaning) {
+            entry.1 = word;
+        }
+    }
+
+    /// A sound change on the whole language (TEG-138): every word of the
+    /// lexicon, the endings and the joiner. A change that leaves an ending
+    /// or the joiner without sounds leaves it as it was. The inventory
+    /// follows the lexicon: a sound its words had and have no more goes, a
+    /// sound they have and it had not comes; the spelling gives the new
+    /// inventory its letters (`Spelling::new`). The first word of the
+    /// lexicon the change changed, before and after; None when it changed
+    /// none.
+    pub fn sound_change(&mut self, change: &Change) -> Option<(Word, Word)> {
+        let kit = kit();
+        let mut had = [false; 256];
+        let mut has = [false; 256];
+        let mut first = None;
+        for (_, w) in &mut self.lexicon {
+            w.sounds.iter().for_each(|p| had[p.0 as usize] = true);
+            if !change.may_change(&w.sounds) {
+                w.sounds.iter().for_each(|p| has[p.0 as usize] = true);
+                continue;
+            }
+            let next = apply_change(change, w);
+            next.sounds.iter().for_each(|p| has[p.0 as usize] = true);
+            if next.sounds != w.sounds {
+                if first.is_none() {
+                    first = Some((w.clone(), next.clone()));
+                }
+                *w = next;
+            }
+        }
+        let bare = |sounds: &[Phoneme]| Word {
+            sounds: sounds.to_vec(),
+            stress: None,
+        };
+        for e in self.grammar.endings.iter_mut().flatten() {
+            let next = apply_change(change, &bare(&e.sounds));
+            if !next.sounds.is_empty() {
+                e.sounds = next.sounds;
+            }
+        }
+        if !self.grammar.joiner_sounds.is_empty() {
+            let next = apply_change(change, &bare(&self.grammar.joiner_sounds));
+            if !next.sounds.is_empty() {
+                self.grammar.joiner_sounds = next.sounds;
+            }
+        }
+        let gone = |p: &Phoneme| had[p.0 as usize] && !has[p.0 as usize];
+        self.inventory.consonants.retain(|p| !gone(p));
+        self.inventory.vowels.retain(|p| !gone(p));
+        for k in 0..kit.sounds.len() {
+            let p = Phoneme(k as u8);
+            if !has[k]
+                || self.inventory.consonants.contains(&p)
+                || self.inventory.vowels.contains(&p)
+            {
+                continue;
+            }
+            let list = if kit.sounds[k].vowel {
+                &mut self.inventory.vowels
+            } else {
+                &mut self.inventory.consonants
+            };
+            let at = list.partition_point(|q| q.0 < p.0);
+            list.insert(at, p);
+        }
+        self.spelling = Spelling::new(kit, self.spelling.style, &self.inventory.sounds());
+        first
+    }
+
+    /// The language in another style of spelling (spelling.json, by its
+    /// index).
+    pub fn respell(&mut self, style: usize) {
+        self.spelling = Spelling::new(kit(), style, &self.inventory.sounds());
     }
 }
 

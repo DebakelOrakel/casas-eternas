@@ -70,7 +70,7 @@ import type { ChartPoint } from '../../map/worldView'
 import type { IncubatorAnswer, IncubatorRequest, PeoplesWithoutIds, PeoplingControls } from './incubatorWorker'
 import { NO_PEOPLE } from './historyPack'
 import { createChroniclePanel, type ChronicleEvent } from './chroniclePanel'
-import { deriveLanguageView, peopleCentre, stubLanguageEngine } from './languageView'
+import { deriveLanguageView, peopleCentre, type HistoryLanguages } from './languageView'
 import { cellInputOf, CHART_HEIGHT, CHART_WIDTH, rainOf, type HistoryRain } from './historyInput'
 import { createLegendPanel } from '../../ui/legend/LegendPanel'
 import { createProgressPill } from '../../ui/progressPill/ProgressPill'
@@ -327,8 +327,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // THE LANGUAGES (ui/languagePanel, TEG-140, DES-0033), read only: a
   // column beside the chronicle, shown by its switch (showPanels), and a
   // full view, a window as the artifacts and the jobs (`windows`). Its view
-  // is the history's peoples through the stub engine (languageView.ts;
-  // showLanguages), or the fixture (`?languages=fixture`, below).
+  // is the history's languages (languageView.ts; showLanguages), or the
+  // fixture (`?languages=fixture`, below).
   const languagePanel = createLanguagePanel(root, {
     // The map's colouring of the peoples selected comes with the languages
     // of the world (a later step of TEG-135 ff.).
@@ -358,7 +358,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const log = settled?.log ?? null
     if (languagesFrom.tree === tree && languagesFrom.log === log) return
     languagesFrom = { tree, log }
-    languageView = tree && log && historyTime ? deriveLanguageView({ tree, log, start: historyTime.start, end: historyTime.end }, stubLanguageEngine) : null
+    languageView = tree && log && historyTime && peoples ? deriveLanguageView({ tree, log, start: historyTime.start, end: historyTime.end, languages: peoples.languages }) : null
     languagePanel.setView(languageView)
   }
 
@@ -547,7 +547,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // THE PEOPLES (2026-10-29): the history's peoples' tree (historyPack.ts
   // PeoplesTree; each kept state's ids come with the state, HistoryFrame
   // `peoples`) and a colour per people (incubatorOverlay.ts peopleColours).
-  let peoples: { tree: PeoplesWithoutIds; colours: Uint8Array } | null = null
+  let peoples: { tree: PeoplesWithoutIds; colours: Uint8Array; languages: HistoryLanguages } | null = null
   // The chronicle's range: from the departure to the step's end — the old
   // stone age's in its step, the history's after it (2026-10-28: one
   // chronicle, each step's built on the one before).
@@ -1702,7 +1702,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     peopleInput = restore ? restore.input : peoplingInput(done.origin, controls)
     people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin, crossings: done.crossings, crossingWays: done.crossingWays }
     historyTime = { start: done.start, end: done.end }
-    peoples = { tree: done.peoples, colours: peopleColours(done.peoples.group) }
+    peoples = { tree: done.peoples, colours: peopleColours(done.peoples.group), languages: done.languages }
     showTimeRange()
     historyFrames = new Map()
     framesAsked.clear()

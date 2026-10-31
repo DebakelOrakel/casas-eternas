@@ -21,6 +21,10 @@ import type { LogEvent } from './historyLogShared'
 // THE PEOPLES (since the incubator's v3, 2026-10-29; the crate's
 // peoples.rs Tree and pack.rs): each kept state's people ids, and the
 // peoples' tree (PeoplesTree).
+//
+// THE LANGUAGES (since 2026-10-31, TEG-138; the crate's languages.rs and
+// pack.rs): each people's node, and the tree of the families, languages
+// and dialects with their descriptions (LanguagesTree).
 
 type Typed = Float32Array | Int32Array | Uint8Array | Uint16Array
 const TYPES = { f32: Float32Array, i32: Int32Array, u8: Uint8Array, u16: Uint16Array } as const
@@ -85,6 +89,62 @@ export function peopleIdsOf(ids: Uint16Array, people: ArrayLike<number>): Uint16
   return out
 }
 
+// THE LANGUAGES' TREE (pack.rs, languages.rs): by people id its node
+// (`peopleLanguage`: a dialect, or a language or a family's proto-language
+// where it speaks no dialect). By node, the parents before their
+// daughters: its parent (-1 for a family), its level (LANGUAGE_LEVEL), the
+// people a language or a dialect is of (-1 for a family), when its line
+// parted from its parent's, when it arose and its last year spoken (years),
+// its seed and its spelling's style. As CSR by node, its dated sound
+// changes (the year in centuries after `from`, the kit's template, its
+// choice) and its new words (the year so, the kit's meaning); the forms
+// follow from them and the kit, through the crate (its WASM
+// `languageView`). `description`: JSON, a language's sounds, a family's
+// stress and syllable forms (null for a dialect).
+export interface LanguagesTree {
+  peopleLanguage: Int32Array
+  parent: Int32Array
+  level: Uint8Array
+  people: Int32Array
+  from: Float32Array
+  at: Float32Array
+  until: Float32Array
+  seed: Int32Array
+  style: Uint8Array
+  changeStart: Int32Array
+  changeYear: Uint16Array
+  change: Uint8Array
+  changeChoice: Uint8Array
+  wordStart: Int32Array
+  wordYear: Uint16Array
+  wordMeaning: Uint8Array
+  description: Uint8Array
+}
+
+// `LanguagesTree.level`.
+export const LANGUAGE_LEVEL = { family: 0, language: 1, dialect: 2 } as const
+
+// The tree's arrays by their pack names.
+export const LANGUAGE_ARRAYS: Record<keyof LanguagesTree, string> = {
+  peopleLanguage: 'peopleLanguage',
+  parent: 'languageParent',
+  level: 'languageLevel',
+  people: 'languagePeople',
+  from: 'languageFrom',
+  at: 'languageAt',
+  until: 'languageUntil',
+  seed: 'languageSeed',
+  style: 'languageStyle',
+  changeStart: 'languageChangeStart',
+  changeYear: 'languageChangeYear',
+  change: 'languageChange',
+  changeChoice: 'languageChangeChoice',
+  wordStart: 'languageWordStart',
+  wordYear: 'languageWordYear',
+  wordMeaning: 'languageWordMeaning',
+  description: 'languages',
+}
+
 // What a packed history holds.
 export interface PackedHistory {
   people: PeopleResult
@@ -111,6 +171,7 @@ export interface PackedHistory {
     population?: Float32Array
   }
   peoples: PeoplesTree
+  languages: LanguagesTree
 }
 
 interface Plain {
@@ -192,6 +253,7 @@ export function unpackHistory(buffer: ArrayBuffer): PackedHistory | null {
         centre: get('peopleCentre'),
         ids: Array.from({ length: plain.frames }, (_, k) => get<Uint16Array>(`peopleIds${k}`)),
       },
+      languages: Object.fromEntries(Object.entries(LANGUAGE_ARRAYS).map(([key, name]) => [key, get(name)])) as unknown as LanguagesTree,
     }
   } catch {
     return null

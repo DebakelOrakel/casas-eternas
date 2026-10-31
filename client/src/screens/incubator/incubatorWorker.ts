@@ -1,10 +1,11 @@
-import initHistory, { coldCurve, iceReachKm, Incubator } from 'casas-incubator-wasm/casas-incubator.js'
+import initHistory, { coldCurve, iceReachKm, Incubator, languageView } from 'casas-incubator-wasm/casas-incubator.js'
 import historyWasmUrl from 'casas-incubator-wasm/casas-incubator_bg.wasm?url'
 import { ANIMALS } from './animals'
 import type { AnimalLayer, CellInput, PeopleResult, PlantLayer, SettleResult, TreeLayer } from './cellsShared'
 import { incubatorOf } from './historyInput'
 import type { LogEvent } from './historyLogShared'
-import { peopleIdsOf, unpackHistory, unpackSettled, type PackedHistory, type PeoplesTree } from './historyPack'
+import { peopleIdsOf, unpackHistory, unpackSettled, type LanguagesTree, type PackedHistory, type PeoplesTree } from './historyPack'
+import type { HistoryLanguages, LanguagesMade } from './languageView'
 import { PEOPLE_FRAME_STEP } from './peopleShared'
 import type { PeoplingInput } from '../../world/historyArtifacts'
 import { PLANTS } from './plants'
@@ -50,8 +51,9 @@ export type IncubatorAnswer =
   // cold of 1 (the sea's drop then is step 1's control).
   | { type: 'climate'; cold: Float32Array; stepYears: number; iceReachKm: number; ms: number }
   // The history's spread, its start and end, and its peoples' tree without
-  // the kept states' ids, which come with the states (historyPack.ts).
-  | ({ type: 'people'; start: number; end: number; peoples: PeoplesWithoutIds; ms: number } & PeopleResult)
+  // the kept states' ids, which come with the states (historyPack.ts); its
+  // languages' tree and what the crate makes of it (languageView.ts).
+  | ({ type: 'people'; start: number; end: number; peoples: PeoplesWithoutIds; languages: HistoryLanguages; ms: number } & PeopleResult)
   // The old stone age (casas-incubator peopling.rs): its spread as a
   // history's, `flow` left 0; each cell's group and their number; the
   // foragers a km² each reached cell carries in today's climate; its log,
@@ -80,13 +82,23 @@ let seed = 0
 let history: PackedHistory | null = null
 let historyBytes: Uint8Array | null = null
 
+// THE LANGUAGES of a history: its tree, copied, and what the crate makes
+// of it (casas-incubator languages.rs `Languages::view`).
+function languagesOf(h: PackedHistory): HistoryLanguages {
+  const l = h.languages
+  const made = JSON.parse(languageView(l.peopleLanguage, l.parent, l.level, l.people, l.from, l.at, l.until, l.seed, l.style, l.changeStart, l.changeYear, l.change, l.changeChoice, l.wordStart, l.wordYear, l.wordMeaning)) as LanguagesMade
+  const tree = Object.fromEntries(Object.entries(l).map(([k, a]) => [k, a.slice()])) as unknown as LanguagesTree
+  return { tree, made }
+}
+
 // The spread, copied for an answer.
 function peopleAnswer(h: PackedHistory, ms: number): void {
   const p = h.people
   const out = { ...p, arrival: p.arrival.slice(), land: p.land.slice(), from: p.from.slice(), flow: p.flow.slice(), crossings: p.crossings.slice(), crossingWays: p.crossingWays.slice() }
   const { ids: _ids, ...tree } = h.peoples
   const peoples = Object.fromEntries(Object.entries(tree).map(([k, a]) => [k, a.slice()])) as unknown as PeoplesWithoutIds
-  worker.postMessage({ type: 'people', start: h.start, end: h.end, peoples, ms, ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer, ...Object.values(peoples).map((a) => a.buffer as ArrayBuffer)])
+  const languages = languagesOf(h)
+  worker.postMessage({ type: 'people', start: h.start, end: h.end, peoples, languages, ms, ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer, ...Object.values(peoples).map((a) => a.buffer as ArrayBuffer), ...Object.values(languages.tree).map((a) => a.buffer as ArrayBuffer)])
 }
 
 // A history's bytes taken: read, kept.

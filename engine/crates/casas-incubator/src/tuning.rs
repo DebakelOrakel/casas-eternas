@@ -9,7 +9,8 @@
 //! `dist/incubator/` (constants.json, version.json).
 
 use crate::{
-    climate_history, eruptions, habitat, log, niche, peoples, peopling, settle, simulation, travel,
+    climate_history, eruptions, habitat, language, languages, log, niche, peoples, peopling,
+    settle, simulation, travel,
 };
 use serde_json::{Map, Value, json};
 
@@ -78,7 +79,15 @@ use serde_json::{Map, Value, json};
 /// the same events; in a desert (BW) the crops suit a cell whose best
 /// arable share reaches FARM_ARABLE (simulation.rs THE FLOODED DESERT),
 /// and the latest city is a town of CITY_LATEST_PEOPLE or more, else
-/// none (simulation.rs THE LATEST CITY).
+/// none (simulation.rs THE LATEST CITY); the languages' tree (languages.rs,
+/// TEG-138, 2026-10-31): a family for each of step 1's groups, a language
+/// where a people lived apart long enough and was big, a dialect for each
+/// big people, with their dated sound changes and new words, packed after
+/// the goods (the other arrays the same bytes), their arising and their
+/// end in the log (new kinds, which a reader that does not know them
+/// passes over); since the history reads it, the language kit
+/// (`data/language/`, without its notes) and the language core's
+/// constants are part of the version.
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
@@ -97,12 +106,26 @@ fn object(pairs: Vec<(&str, f64)>) -> Value {
     )
 }
 
-/// The tuning by module, and the catalog: `{ climate, eruptions,
-/// habitat, niche, travel, peopling, simulation, peoples, settle, log,
-/// catalog }`.
+/// The tuning by module, the catalog and the language kit: `{ climate,
+/// eruptions, habitat, niche, travel, peopling, simulation, peoples,
+/// language, languages, settle, log, catalog, kit }`.
 pub fn constants() -> Value {
     let catalog: Value =
         serde_json::from_str(include_str!("../data/catalog.json")).expect("data/catalog.json");
+    let read = |name: &str, text: &str| -> Value {
+        without_notes(
+            serde_json::from_str(text).unwrap_or_else(|e| panic!("data/language/{name}: {e}")),
+        )
+    };
+    let kit = json!({
+        "sounds": read("sounds.json", include_str!("../data/language/sounds.json")),
+        "inventories": read("inventories.json", include_str!("../data/language/inventories.json")),
+        "syllables": read("syllables.json", include_str!("../data/language/syllables.json")),
+        "changes": read("changes.json", include_str!("../data/language/changes.json")),
+        "meanings": read("meanings.json", include_str!("../data/language/meanings.json")),
+        "spelling": read("spelling.json", include_str!("../data/language/spelling.json")),
+        "patterns": read("patterns.json", include_str!("../data/language/patterns.json")),
+    });
     let mut log = table!(log: );
     log.extend(log::POPULATION_MARKS.iter().enumerate().map(|(k, &v)| {
         (
@@ -152,12 +175,21 @@ pub fn constants() -> Value {
             CONTACT_DAYS, TRAIT_LIKE, PEOPLE_DISTANCE, REPLACE_SHARE, FIELDS_AROUND, FIELDS_AROUND_KM, SPLIT_KM2, WAVE_RATIO, WAVE_CHANCE, WAVE_KM_A,
             PEOPLE_LEAST, PEOPLE_LEAST_KM2, SPLIT_TOLD_SHARE, FARMERS_TOLD_SHARE, TOLD_LIVES_YEARS, EARLY_SPLIT_YEARS, TOLD_SPAN_SHARE, FARMERS_TOLD,
         )),
+        "language": object(table!(language:
+            LEXICON_SHARE, HOMOPHONE_TRIES, IMPLICATION_ROUNDS, WORD_LENGTH_SHIFT, WORD_LENGTH_SHORT, WORD_LENGTH_LONG,
+            JOINER_ALWAYS, PEOPLE_PREFIX, ENDING_TRIES,
+        )),
+        "languages": object(table!(languages:
+            LANGUAGE_APART_YEARS, LANGUAGE_SHARE, CENTURY_YEARS, SOUND_CHANGE_CHANCE, WORD_LOSS_CHANCE, CHANGE_TRIES,
+            CHANGE_LEAST_WORDS, DIALECT_CHANGES_LEAST, DIALECT_CHANGES_MOST,
+        )),
         "settle": object(table!(settle:
             CARRYING_FULL, DENSITY_TAU, FORAGER_WEIGHT, LINKS, LINK_DAYS, SOURCE_RICH, SOURCE_DAYS,
             SOURCE_RADIUS, DECAY_DAYS, DRAW_LEAST, DRAW_MOST, DRAW_NONE, MAX_DAYS, TRADE_TOLD,
         )),
         "log": object(log),
         "catalog": without_notes(catalog),
+        "kit": kit,
     })
 }
 
@@ -255,6 +287,16 @@ mod tests {
         "POPULATION_MARKS",
         "LANGUAGE",
         "INCUBATOR_ALGO_VERSION",
+        // The language core's tables of letters and of the notation's
+        // fields (spelling.rs, notation.rs), and Kind's list.
+        "MACRON",
+        "ACUTE",
+        "CIRCUMFLEX",
+        "TILDE",
+        "TEXT_FIELDS",
+        "SERIES",
+        "BOOLS",
+        "ALL",
     ];
 
     // Every constant of the modules is in the table or is format: one
@@ -276,6 +318,16 @@ mod tests {
             ("history", include_str!("history.rs")),
             ("catalog", include_str!("catalog.rs")),
             ("pack", include_str!("pack.rs")),
+            ("languages", include_str!("languages.rs")),
+            ("language", include_str!("language/mod.rs")),
+            ("language", include_str!("language/change.rs")),
+            ("language", include_str!("language/draw.rs")),
+            ("language", include_str!("language/inventory.rs")),
+            ("language", include_str!("language/kit.rs")),
+            ("language", include_str!("language/names.rs")),
+            ("language", include_str!("language/notation.rs")),
+            ("language", include_str!("language/spelling.rs")),
+            ("language", include_str!("language/syllable.rs")),
         ];
         let table = constants();
         for (module, source) in sources {

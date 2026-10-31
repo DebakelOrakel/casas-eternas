@@ -4,14 +4,17 @@
 //   npm run harness:languages
 //
 // 1. The adapter (screens/incubator/languageView.ts) on a peoples' tree of
-//    the history's shape (historyPack.ts PeoplesTree) and its log, through
-//    the stub engine: at every kept state the speakers of the families
-//    together are the people of the peoples; a family's are its languages';
-//    a dialect dies out exactly at its people's end in the log
-//    (peopleGone, peopleMerged, peopleReplaced), and a language or a family
-//    when the last of its dialects does. The tree is made here, seeded: a
-//    real one needs a world and a history run (minutes), and the
-//    derivation reads only the tree's arrays.
+//    the history's shape (historyPack.ts PeoplesTree) and its log, with the
+//    languages' tree the crate makes of it (casas-incubator languages.rs,
+//    through its WASM build: TEG-138): at every kept state the speakers of
+//    the families together are the people of the peoples; a family's are
+//    its languages' and its proto-language's; a language has none before
+//    it arose; a dialect dies out exactly at its people's end in the log
+//    (peopleGone, peopleMerged, peopleReplaced), a language at its
+//    languageGone, a family and its proto-language at its familyGone. The
+//    peoples are made here, seeded: a real tree needs a world and a
+//    history run (minutes), and the languages read only the tree's
+//    arrays. Needs `make engine` (engine/dist/incubator).
 // 2. The fixture (scripts/fixtures): it loads as a view, and its numbers
 //    add up as the adapter's do.
 // 3. The window set (ui/windows/windowSet.ts): one window at a time, and
@@ -19,6 +22,7 @@
 // 4. The catalog: one `language.meaning.<id>` for every meaning of the
 //    language kit, and no other.
 import { readFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 
 const CLIENT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
@@ -27,10 +31,16 @@ const server = await createServer({ root: CLIENT, server: { middlewareMode: true
 const L = (p) => server.ssrLoadModule(p)
 const M = {
   view: await L('/src/screens/incubator/languageView.ts'),
+  pack: await L('/src/screens/incubator/historyPack.ts'),
   fixture: await L('/scripts/fixtures/fixtureView.ts'),
   windows: await L('/src/ui/windows/windowSet.ts'),
   types: await L('/src/ui/languagePanel/languageTypes.ts'),
 }
+
+// The incubator's WASM build (engine/dist/incubator, `make engine`).
+const INCUBATOR = new URL('../../engine/dist/incubator/', import.meta.url)
+const wasm = await import(new URL('casas-incubator.js', INCUBATOR).href)
+await wasm.default({ module_or_path: await readFile(new URL('casas-incubator_bg.wasm', INCUBATOR)) })
 
 let failures = 0
 const check = (name, ok, detail = '') => {
@@ -118,17 +128,62 @@ function makeHistory(seed) {
   return { tree, log, start, end }
 }
 
-console.log('1. the adapter (languageView.ts, stub engine)')
-for (const seed of [1, 7, 2840]) {
-  const history = makeHistory(seed)
+// What the history keeps of each people for the languages (peoples.rs
+// `People`: its largest share of the km² lived in while big, its last
+// heart, its heart LANGUAGE_APART_YEARS after its birth, whether it was
+// replaced), from the made tree's rows and log.
+function languageInputs(history) {
   const { tree, log } = history
-  const view = M.view.deriveLanguageView(history, M.view.stubLanguageEngine)
+  const n = tree.parent.length
+  const lived = new Map()
+  for (let r = 0; r < tree.frame.length; r++) lived.set(tree.frame[r], (lived.get(tree.frame[r]) ?? 0) + tree.km2[r])
+  const times = M.view.keptTimes(history.start, history.end)
+  const share = new Float64Array(n)
+  const heart = new Int32Array(n).fill(-1)
+  const heartApart = new Int32Array(n).fill(-1)
+  for (let p = 0; p < n; p++) {
+    for (let r = tree.frameStart[p]; r < tree.frameStart[p + 1]; r++) {
+      if (tree.big[p]) share[p] = Math.max(share[p], tree.km2[r] / lived.get(tree.frame[r]))
+      heart[p] = tree.centre[r]
+      if (heartApart[p] < 0 && times[tree.frame[r]] - tree.born[p] >= 1500) heartApart[p] = tree.centre[r]
+    }
+  }
+  const replaced = new Uint8Array(n)
+  for (const e of log) if (e.kind === 'peopleReplaced') replaced[e.people] = 1
+  return { share, heart, heartApart, replaced }
+}
+
+// The history's languages as the crate makes them (its WASM build): the
+// tree, the events into the log, what the crate makes of the tree.
+function languagesOf(history, seed) {
+  const { tree } = history
+  const x = languageInputs(history)
+  const out = JSON.parse(wasm.languagesOfPeoples(tree.parent, tree.group, Float64Array.from(tree.born), Float64Array.from(tree.ended), tree.mergedInto, tree.big, x.share, x.replaced, x.heart, x.heartApart, seed, history.start, history.end))
+  const types = { peopleLanguage: Int32Array, parent: Int32Array, level: Uint8Array, people: Int32Array, from: Float32Array, at: Float32Array, until: Float32Array, seed: Int32Array, style: Uint8Array, changeStart: Int32Array, changeYear: Uint16Array, change: Uint8Array, changeChoice: Uint8Array, wordStart: Int32Array, wordYear: Uint16Array, wordMeaning: Uint8Array }
+  const packed = Object.fromEntries(Object.entries(types).map(([key, T]) => [key, T.from(out.arrays[M.pack.LANGUAGE_ARRAYS[key]])]))
+  packed.description = new TextEncoder().encode(out.arrays.languages)
+  const l = packed
+  const made = JSON.parse(wasm.languageView(l.peopleLanguage, l.parent, l.level, l.people, l.from, l.at, l.until, l.seed, l.style, l.changeStart, l.changeYear, l.change, l.changeChoice, l.wordStart, l.wordYear, l.wordMeaning))
+  return { languages: { tree: packed, made }, events: out.log }
+}
+
+console.log('1. the adapter (languageView.ts) on the crate\'s languages (its WASM build)')
+for (const seed of [1, 7, 2840]) {
+  const made = makeHistory(seed)
+  const { languages, events } = languagesOf(made, seed)
+  const log = [...made.log, ...events].sort((a, b) => a.at - b.at)
+  const history = { ...made, log, languages }
+  const { tree } = history
+  const view = M.view.deriveLanguageView(history)
   const byId = new Map(view.nodes.map((n) => [n.id, n]))
   const ofLevel = (level) => view.nodes.filter((n) => n.level === level)
   const families = ofLevel('family')
+  const proper = ofLevel('language').filter((n) => !n.proto)
   const peopleCount = tree.parent.length
   const bigCount = tree.big.reduce((s, b) => s + b, 0)
-  console.log(`  seed ${seed}: ${peopleCount} peoples (${bigCount} big), ${log.length} log events, ${view.times.length} kept states, ${families.length} families, ${ofLevel('language').length} languages, ${ofLevel('dialect').length} dialects`)
+  const count = (kind) => events.filter((e) => e.kind === kind).length
+  console.log(`  seed ${seed}: ${peopleCount} peoples (${bigCount} big), ${view.times.length} kept states; ${families.length} families, ${proper.length} languages, ${ofLevel('dialect').length} dialects; ${count('languageArises')} arise, ${count('languageGone')} languages and ${count('familyGone')} families gone`)
+  check(`seed ${seed}: the tree has languages of its own, and some arise and some go`, proper.length > 0 && count('languageArises') > 0 && count('languageGone') > 0)
 
   // The speakers add up to the people, state by state.
   let worst = ''
@@ -143,46 +198,49 @@ for (const seed of [1, 7, 2840]) {
   for (const node of view.nodes) {
     if (node.level === 'dialect') continue
     const below = view.nodes.filter((c) => c.parent === node.id)
-    if (node.level === 'family') {
-      for (let k = 0; k < view.times.length; k++) {
-        const sum = below.reduce((s, c) => s + c.speakers[k], 0)
-        if (!near(sum, node.speakers[k]) && !parts) parts = `${node.id} at ${k}: ${node.speakers[k]} vs ${sum}`
-      }
-    } else {
-      for (let k = 0; k < view.times.length; k++) {
-        const sum = below.reduce((s, c) => s + c.speakers[k], 0)
-        if (sum > node.speakers[k] * (1 + 1e-5) + 1e-3 && !parts) parts = `${node.id} at ${k}: dialects ${sum} over ${node.speakers[k]}`
-      }
+    for (let k = 0; k < view.times.length; k++) {
+      const sum = below.reduce((s, c) => s + c.speakers[k], 0)
+      if (node.level === 'family' ? !near(sum, node.speakers[k]) : sum > node.speakers[k] * (1 + 1e-5) + 1e-3) parts ||= `${node.id} at ${k}: ${node.speakers[k]} vs ${sum}`
     }
   }
-  check(`seed ${seed}: a family's speakers are its languages', a language's at least its dialects'`, parts === '', parts)
+  check(`seed ${seed}: a family's speakers are its languages' (its proto-language's with them), a language's at least its dialects'`, parts === '', parts)
+  // A language arisen from a people has its speakers from its arising on.
+  let early = ''
+  for (const node of proper) {
+    for (let k = 0; k < view.times.length; k++) if (view.times[k] < node.born && node.speakers[k] > 0) early ||= `${node.id} at ${view.times[k]}, born ${node.born}`
+  }
+  check(`seed ${seed}: a language has no speakers before it arose`, early === '', early)
 
   // The dialects die out at their people's end in the log, and only there.
-  const ends = new Map()
-  for (const e of log) if (e.kind === 'peopleGone' || e.kind === 'peopleMerged' || e.kind === 'peopleReplaced') ends.set(e.people, e.at)
+  const ends = M.view.peopleEnds(log)
   let wrong = ''
   let told = 0
   for (let p = 0; p < peopleCount; p++) {
     if (!tree.big[p]) continue
-    const dialect = ofLevel('dialect').find((d) => d.peoples.length === 1 && d.peoples[0] === p && d.id === `d${p}`)
+    const dialect = ofLevel('dialect').find((d) => d.peoples.length === 1 && d.peoples[0] === p)
     if (!dialect) { wrong ||= `people ${p}: no dialect`; continue }
     const end = ends.get(p) ?? null
     if (end !== null) told++
     if (dialect.ended !== end) wrong ||= `people ${p}: † ${dialect.ended}, its end ${end}`
   }
   check(`seed ${seed}: each big people's dialect ends exactly at its end event (${told} told)`, wrong === '' && told > 0, wrong)
-  let above = ''
-  for (const node of view.nodes) {
-    if (node.level === 'dialect') continue
-    const dialects = []
-    const walk = (id) => { for (const c of view.nodes) if (c.parent === id) { if (c.level === 'dialect') dialects.push(c); walk(c.id) } }
-    walk(node.id)
-    const expect = dialects.length > 0 && dialects.every((d) => d.ended !== null) ? Math.max(...dialects.map((d) => d.ended)) : null
-    if (node.ended !== expect) above ||= `${node.id}: † ${node.ended}, expected ${expect}`
+  // The languages and the families die out at their log events, and only
+  // there; a language gone is spoken no more after it.
+  let gone = ''
+  const languageGone = new Map(events.filter((e) => e.kind === 'languageGone').map((e) => [`l${e.language}`, e.at]))
+  const familyGone = new Map(events.filter((e) => e.kind === 'familyGone').map((e) => [`f${e.family}`, e.at]))
+  for (const node of proper) {
+    if (node.ended !== (languageGone.get(node.id) ?? null)) gone ||= `${node.id}: † ${node.ended}, its event ${languageGone.get(node.id)}`
+    if (node.ended !== null) for (let k = 0; k < view.times.length; k++) if (view.times[k] > node.ended && node.speakers[k] > 0) gone ||= `${node.id}: speakers after its †`
   }
-  check(`seed ${seed}: a language and a family end with the last of their dialects`, above === '', above)
+  for (const node of families) {
+    const end = familyGone.get(node.id) ?? null
+    if (node.ended !== end || byId.get(`${node.id}p`).ended !== end) gone ||= `${node.id}: † ${node.ended}, its event ${end}`
+  }
+  check(`seed ${seed}: a language, a family and its proto-language end at their log events (${languageGone.size} and ${familyGone.size})`, gone === '', gone)
   check(`seed ${seed}: every big people speaks one dialect and is counted in its family`, families.reduce((s, f) => s + f.peoples.length, 0) === bigCount)
-  check(`seed ${seed}: each node is born by its first people`, view.nodes.every((n) => n.parent === null || n.born >= byId.get(n.parent).born))
+  check(`seed ${seed}: each node is born by its parent`, view.nodes.every((n) => n.parent === null || n.born >= byId.get(n.parent).born))
+  check(`seed ${seed}: each language has a detail, each node and people a name`, ofLevel('language').every((n) => view.detail(n.id) !== null) && view.nodes.every((n) => n.name !== '') && Array.from({ length: peopleCount }, (_, p) => view.peopleName(p)).every((s) => s !== ''))
   const centre = M.view.peopleCentre(tree, families[0].peoples, view.times.length - 1)
   check(`seed ${seed}: a family's centre is one of its peoples' hearts`, families[0].peoples.length === 0 || tree.centre.includes(centre))
 }

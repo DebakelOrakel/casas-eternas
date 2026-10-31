@@ -43,6 +43,28 @@
 //! from, -1 for none]; by village (of `villages`), as CSR: `goodsStart`
 //! i32, one more than the villages; `goodsSource` i32 (the source's index)
 //! and `goodsShare` f32 (what the village drew of its goods).
+//!
+//! THE LANGUAGES (since v6, 2026-10-31, TEG-138; languages.rs), after the
+//! goods, which keep their bytes:
+//! - `peopleLanguage` i32, by people id its node (a dialect, or a language
+//!   or a family's proto-language where it speaks no dialect).
+//! - By node, the parents before their daughters: `languageParent` i32
+//!   (-1 for a family), `languageLevel` u8 (0 a family, 1 a language, 2 a
+//!   dialect), `languagePeople` i32 (the people a language or a dialect is
+//!   of; -1 for a family), `languageFrom` f32, `languageAt` f32 and
+//!   `languageUntil` f32 (when its line parted from its parent's, when it
+//!   arose, its last year spoken; years), `languageSeed` i32 (its draws'
+//!   seed, the bits of a u32), `languageStyle` u8 (spelling.json's style).
+//! - By node, as CSR: its dated sound changes, `languageChangeStart` i32
+//!   (one more than the nodes), `languageChangeYear` u16 (centuries after
+//!   its `from`), `languageChange` u8 (changes.json's template) and
+//!   `languageChangeChoice` u8; its new words, `languageWordStart` i32,
+//!   `languageWordYear` u16 (centuries after its `from`) and
+//!   `languageWordMeaning` u8 (meanings.json's meaning). The kit's lists
+//!   are part of the incubator's version.
+//! - `languages` u8: JSON (UTF-8), by node a language's sounds at its
+//!   last year, a family's stress rule and syllable forms; null for a
+//!   dialect (`Languages::pack`).
 
 use crate::log::Json;
 use crate::simulation::SimulationResult;
@@ -234,6 +256,7 @@ pub fn pack_history(r: &SimulationResult) -> Vec<u8> {
         ("goodsSource".into(), Array::I32(&r.goods.source)),
         ("goodsShare".into(), Array::F32(&r.goods.share)),
     ]);
+    push_languages(r, &mut arrays);
     pack(
         |j| {
             j.open_object();
@@ -376,6 +399,39 @@ fn push_peoples<'a>(
         (
             "peopleCentre".into(),
             Array::I32Owned(frames().map(|f| f.centre).collect()),
+        ),
+    ]);
+}
+
+// THE LANGUAGES' arrays (see the module's head), after the goods.
+fn push_languages(r: &SimulationResult, arrays: &mut Vec<(String, Array)>) {
+    let p = r.languages.pack();
+    arrays.extend([
+        ("peopleLanguage".into(), Array::I32Owned(p.people_language)),
+        ("languageParent".into(), Array::I32Owned(p.parent)),
+        ("languageLevel".into(), Array::U8Owned(p.level)),
+        ("languagePeople".into(), Array::I32Owned(p.people)),
+        ("languageFrom".into(), Array::F32Owned(p.from)),
+        ("languageAt".into(), Array::F32Owned(p.at)),
+        ("languageUntil".into(), Array::F32Owned(p.until)),
+        ("languageSeed".into(), Array::I32Owned(p.seed)),
+        ("languageStyle".into(), Array::U8Owned(p.style)),
+        (
+            "languageChangeStart".into(),
+            Array::I32Owned(p.change_start),
+        ),
+        ("languageChangeYear".into(), Array::U16Owned(p.change_year)),
+        ("languageChange".into(), Array::U8Owned(p.change)),
+        (
+            "languageChangeChoice".into(),
+            Array::U8Owned(p.change_choice),
+        ),
+        ("languageWordStart".into(), Array::I32Owned(p.word_start)),
+        ("languageWordYear".into(), Array::U16Owned(p.word_year)),
+        ("languageWordMeaning".into(), Array::U8Owned(p.word_meaning)),
+        (
+            "languages".into(),
+            Array::U8Owned(p.description.into_bytes()),
         ),
     ]);
 }

@@ -75,6 +75,18 @@ export type LogEvent =
   | { kind: 'peopleGone'; at: number; cell: number; people: number; count: number; km2: number }
   // People `people`'s farmers' share (by people) went to 0.5 or more.
   | { kind: 'peopleFarmers'; at: number; cell: number; people: number; count: number; km2: number; farmers: number }
+  // THE LANGUAGES (casas-incubator languages.rs, TEG-138, 2026-10-31):
+  // `language` and `family` nodes of the languages' tree (historyPack.ts
+  // LanguagesTree), `people` a people's id. Language `language` arises
+  // from `from`: people `people` lived apart long enough; at its heart then.
+  // An older reader passes over these kinds.
+  | { kind: 'languageArises'; at: number; cell: number; language: number; from: number; people: number }
+  // Language `language` is spoken no more: its last people `people` ended,
+  // into a people that speaks `into` (-1 where it died out); `replaced`
+  // where the newcomers displaced it, `into` their language.
+  | { kind: 'languageGone'; at: number; cell: number; language: number; people: number; into: number; replaced: boolean }
+  // Family `family` is spoken no more: its last people `people` ended.
+  | { kind: 'familyGone'; at: number; cell: number; family: number; people: number }
 
 // The people's marks the log notes.
 export const POPULATION_MARKS = [100_000, 1_000_000, 10_000_000]

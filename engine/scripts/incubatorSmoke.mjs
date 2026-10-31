@@ -6,7 +6,8 @@
 // climates' belts, rivers, the ecology's fields, the rain's reliability:
 // the habitat, the flora, the fauna, the history (its packed bytes), its
 // peoples (their arrays in the pack, since the incubator's v3), where its
-// goods came from (their arrays in the pack, since 2026-10-30) and its
+// goods came from (their arrays in the pack, since 2026-10-30), its
+// languages (their arrays in the pack, since 2026-10-31) and its
 // settlement, hashed, must be the reference's. The reference was recorded
 // while the TypeScript the crate was ported from still stood beside it and
 // gave the same bits (2026-10-27; and on Morvane, the whole H1 alike); it
@@ -197,28 +198,38 @@ const hashOf = (...parts) => {
   for (const p of parts) digest.update(ArrayBuffer.isView(p) ? bytesOf(p) : p)
   return digest.digest('hex')
 }
-// WHERE THE GOODS CAME FROM (the pack's last arrays since the incubator's
-// v6, 2026-10-30; pack.rs): hashed apart, and the history's hash is that
-// of the pack without them, the bytes it had before them. So the goods
-// cannot change the rest of the history unseen.
+// WHERE THE GOODS CAME FROM (the pack's arrays after the peoples since the
+// incubator's v6, 2026-10-30; pack.rs) and THE LANGUAGES (after the goods
+// since 2026-10-31, TEG-138; languages.rs): each hashed apart, and the
+// history's hash is that of the pack without them, the bytes it had
+// before them. So neither can change the rest of the history's arrays
+// unseen. (The languages' events are in the log, the header: they change
+// the history's hash.)
 const pad8 = (n) => (n + 7) & ~7
-function goodsApart(pack) {
+const GOODS = /^goods/
+const LANGUAGES = /^(language|peopleLanguage$)/
+function tailApart(pack) {
   const bytes = bytesOf(pack)
   const length = bytes.readUInt32LE(0)
   const head = bytes.subarray(4, 4 + length).toString('utf8')
   const arrays = JSON.parse(head).arrays
-  const goods = arrays.filter((a) => a.name.startsWith('goods'))
-  const end = Math.min(...goods.map((a) => a.offset))
-  if (goods.length !== 4 || arrays.some((a) => !a.name.startsWith('goods') && a.offset >= end)) throw new Error('the goods are not the pack\'s last arrays')
-  const rest = Buffer.from(head.replace(/,\{"name":"goods[A-Za-z]*","type":"[a-z0-9]+","offset":\d+,"length":\d+\}/g, ''), 'utf8')
+  const tail = (a) => GOODS.test(a.name) || LANGUAGES.test(a.name)
+  const goods = arrays.filter((a) => GOODS.test(a.name))
+  const languages = arrays.filter((a) => LANGUAGES.test(a.name))
+  const end = Math.min(...arrays.filter(tail).map((a) => a.offset))
+  if (goods.length !== 4 || languages.length !== 17 || arrays.some((a) => !tail(a) && a.offset >= end)) throw new Error('the goods and the languages are not the pack\'s last arrays')
+  const parsed = JSON.parse(head)
+  parsed.arrays = arrays.filter((a) => !tail(a))
+  const rest = Buffer.from(JSON.stringify(parsed), 'utf8')
   const data = pad8(4 + length)
   const history = Buffer.alloc(pad8(4 + rest.length) + end)
   history.writeUInt32LE(rest.length, 0)
   rest.copy(history, 4)
   bytes.copy(history, pad8(4 + rest.length), data, data + end)
-  const size = { 'i32': 4, 'f32': 4 }
-  const of = Object.fromEntries(goods.map((a) => [a.name, bytes.subarray(data + a.offset, data + a.offset + a.length * size[a.type])]))
-  return { history, goods: of, bytes: bytes.length, before: history.length }
+  const size = { i32: 4, f32: 4, u16: 2, u8: 1 }
+  const of = (list) => Object.fromEntries(list.map((a) => [a.name, bytes.subarray(data + a.offset, data + a.offset + a.length * size[a.type])]))
+  const tailBytes = (list) => list.reduce((s, a) => s + a.length * size[a.type], 0)
+  return { history, goods: of(goods), languages: of(languages), bytes: bytes.length, before: history.length, goodsBytes: tailBytes(goods), languageBytes: tailBytes(languages) }
 }
 // STEP 1'S CONTROLS (2026-10-30, DES-0032): the defaults given are the
 // defaults left out (the history's bits above are the defaults'); another
@@ -274,9 +285,10 @@ for (const kind of ['torus', 'sphere']) {
   t0 = performance.now()
   const pack = rs.simulate(-1, world.seed, r.width, r.height, r.variability, r.enso, r.ensoStrength, undefined)
   const runMs = performance.now() - t0
-  const apart = goodsApart(pack)
+  const apart = tailApart(pack)
   hashes[`${kind} history`] = hashOf(apart.history)
   hashes[`${kind} goods`] = hashOf(...Object.values(apart.goods))
+  hashes[`${kind} languages`] = hashOf(...Object.values(apart.languages))
   const history = unpackHistory(pack.buffer.slice(pack.byteOffset, pack.byteOffset + pack.byteLength))
   if (!history) {
     fail(`${kind} history: its pack does not read`)
@@ -307,7 +319,19 @@ for (const kind of ['torus', 'sphere']) {
   for (let k = 2; k < links.length; k += 3) linksSum += links[k]
   if (Math.abs(sharesSum - linksSum) > 1e-4 * Math.max(1, linksSum)) fail(`${kind} goods: their shares sum to ${sharesSum}, the links' weights to ${linksSum}`)
   if (shares.length > 0) seen.add('goods')
-  console.log(`incubator: ${kind} — H1 ${apart.bytes} bytes, ${apart.before} without the goods (+${(100 * (apart.bytes - apart.before) / apart.before).toFixed(2)} %): ${apart.goods.goodsSources.length / 12} sources, ${shares.length} shares`)
+  console.log(`incubator: ${kind} — H1 ${apart.bytes} bytes, ${apart.before} without the goods and the languages: the goods ${apart.goodsBytes} bytes, ${apart.goods.goodsSources.length / 12} sources, ${shares.length} shares`)
+  // THE LANGUAGES: a family for each of step 1's groups, a dialect for
+  // each big people; each people speaks a node.
+  const lt = history.languages
+  const levels = [0, 1, 2].map((l) => lt.level.filter((x) => x === l).length)
+  const groups = new Set(tree.group).size
+  const bigs = tree.big.reduce((a, b) => a + b, 0)
+  if (levels[0] !== groups) fail(`${kind} languages: ${levels[0]} families for ${groups} groups`)
+  if (levels[2] !== bigs) fail(`${kind} languages: ${levels[2]} dialects for ${bigs} big peoples`)
+  if (lt.peopleLanguage.length !== tree.parent.length || lt.peopleLanguage.some((k) => k < 0 || k >= lt.level.length)) fail(`${kind} languages: a people speaks no node`)
+  if (levels[1] > 0) seen.add('languages')
+  const told = (k) => history.log.filter((e) => e.kind === k).length
+  console.log(`incubator: ${kind} — ${levels[0]} families, ${levels[1]} languages, ${levels[2]} dialects in ${apart.languageBytes} bytes; ${told('languageArises')} arise, ${told('languageGone')} languages and ${told('familyGone')} families gone`)
   // What the world reached, for `reaches`.
   for (const e of history.log) seen.add(e.kind === 'centre' ? `centre ${e.lifeway}` : e.kind)
   // The ice: a cell lived in, left (its people gone in a kept state), lived
@@ -339,8 +363,9 @@ for (const kind of ['torus', 'sphere']) {
     habitat: hashOf(nat.owners(), ...['areaKm2', 'heightM', 'slope', 'seaDepthM', 'riverSize', 'distKm', 'u', 'v'].map((name) => nat.floats(name)), ...CELL_ECOLOGY.map((id) => nat.floats(`eco:${id}`)), ...['land', 'biome', 'koppen', 'nearRiver', 'nearLake', 'nearSea'].map((name) => nat.bytes(name)), ...['landmass', 'nbrStart', 'nbr'].map((name) => nat.ints(name)), nat.landmassKm2(), nat.scalars(), nat.iceKm(), native.coldCurve(world.seed)),
     flora: hashOf(nat.floraCodes(), nat.floraShares()),
     fauna: hashOf(nat.faunaCodes(), nat.faunaShares()),
-    history: hashOf(goodsApart(natPack).history),
-    goods: hashOf(...Object.values(goodsApart(natPack).goods)),
+    history: hashOf(tailApart(natPack).history),
+    goods: hashOf(...Object.values(tailApart(natPack).goods)),
+    languages: hashOf(...Object.values(tailApart(natPack).languages)),
     peoples: peoplesHash(unpackHistory(natPack.buffer.slice(natPack.byteOffset, natPack.byteOffset + natPack.byteLength))),
     settlement: hashOf(natSettled),
   }
@@ -354,7 +379,7 @@ for (const kind of ['torus', 'sphere']) {
     if (wasmOther !== natOther) fail(`${kind} controls: the native build's history differs from the WASM's`)
     if (wasmOther === hashOf(pack)) fail(`${kind} controls: the history does not change with them`)
   }
-  if (golden) for (const part of ['habitat', 'flora', 'fauna', 'history', 'peoples', 'settlement', 'goods']) {
+  if (golden) for (const part of ['habitat', 'flora', 'fauna', 'history', 'peoples', 'settlement', 'goods', 'languages']) {
     const key = `${kind} ${part}`
     if (golden[key] !== hashes[key]) fail(`${key}: not the reference's (${hashes[key].slice(0, 12)} against ${String(golden[key]).slice(0, 12)})`)
   }
@@ -398,7 +423,11 @@ for (const kind of ['torus', 'sphere']) {
 // `a_split_that_held_to_a_short_history_s_end_is_told`,
 // `the_tree_keeps_ids_and_records_splits_and_merges` and
 // `a_people_the_waves_took_is_told_replaced`.
-const reaches = ['departure', 'trade', 'crossing', 'centre 3', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleSplit', 'peopleMerged', 'peopleReplaced', 'peopleGone', 'peopleFarmers', 'goods']
+// THE LANGUAGES (TEG-138, 2026-10-31): a language of its own on a world
+// ('languages', a people that lived LANGUAGE_APART_YEARS and was big
+// with LANGUAGE_SHARE), one arising told ('languageArises'). Also in
+// languages.rs `the_tree_has_families_languages_and_dialects`.
+const reaches = ['departure', 'trade', 'crossing', 'centre 3', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleSplit', 'peopleMerged', 'peopleReplaced', 'peopleGone', 'peopleFarmers', 'goods', 'languages', 'languageArises']
 for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
 // The languages (language/mod.rs, TEG-137): no world, no reference yet —
 // the crate's own tests keep a fixed seed's names. The native build must

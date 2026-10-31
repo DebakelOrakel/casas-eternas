@@ -209,6 +209,37 @@ pub enum LogEvent {
         km2: f64,
         farmers: f64,
     },
+    /// THE LANGUAGES (languages.rs, TEG-138, since 2026-10-31): `language`
+    /// a node of the languages' tree (pack.rs `languageParent` …), `people`
+    /// a people's id. Language `language` arises from `from`: people
+    /// `people` lived LANGUAGE_APART_YEARS apart; at its heart then.
+    LanguageArises {
+        at: f64,
+        cell: f64,
+        language: f64,
+        from: f64,
+        people: f64,
+    },
+    /// Language `language` is spoken no more: its last people `people`
+    /// ended, into a people that speaks `into` (-1 where it died out);
+    /// `replaced` where THE WAVES displaced it (as `PeopleReplaced`), so
+    /// `into` is the newcomers' language. At its heart at its last step.
+    LanguageGone {
+        at: f64,
+        cell: f64,
+        language: f64,
+        people: f64,
+        into: f64,
+        replaced: bool,
+    },
+    /// Family `family` (a node of the tree) is spoken no more: its last
+    /// people `people` ended. At its heart at its last step.
+    FamilyGone {
+        at: f64,
+        cell: f64,
+        family: f64,
+        people: f64,
+    },
 }
 
 impl LogEvent {
@@ -239,7 +270,10 @@ impl LogEvent {
             | LogEvent::PeopleMerged { at, .. }
             | LogEvent::PeopleReplaced { at, .. }
             | LogEvent::PeopleGone { at, .. }
-            | LogEvent::PeopleFarmers { at, .. } => *at,
+            | LogEvent::PeopleFarmers { at, .. }
+            | LogEvent::LanguageArises { at, .. }
+            | LogEvent::LanguageGone { at, .. }
+            | LogEvent::FamilyGone { at, .. } => *at,
         }
     }
 
@@ -645,6 +679,54 @@ impl LogEvent {
                     .number(*km2)
                     .key("farmers")
                     .number(*farmers);
+            }
+            LogEvent::LanguageArises {
+                at,
+                cell,
+                language,
+                from,
+                people,
+            } => {
+                kind(j, "languageArises");
+                j.key("at").number(*at).key("cell").number(*cell);
+                j.key("language")
+                    .number(*language)
+                    .key("from")
+                    .number(*from)
+                    .key("people")
+                    .number(*people);
+            }
+            LogEvent::LanguageGone {
+                at,
+                cell,
+                language,
+                people,
+                into,
+                replaced,
+            } => {
+                kind(j, "languageGone");
+                j.key("at").number(*at).key("cell").number(*cell);
+                j.key("language")
+                    .number(*language)
+                    .key("people")
+                    .number(*people)
+                    .key("into")
+                    .number(*into)
+                    .key("replaced")
+                    .boolean(*replaced);
+            }
+            LogEvent::FamilyGone {
+                at,
+                cell,
+                family,
+                people,
+            } => {
+                kind(j, "familyGone");
+                j.key("at").number(*at).key("cell").number(*cell);
+                j.key("family")
+                    .number(*family)
+                    .key("people")
+                    .number(*people);
             }
         }
         j.close_object();

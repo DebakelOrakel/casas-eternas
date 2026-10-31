@@ -84,6 +84,13 @@ declare module 'casas-incubator-wasm/casas-incubator.js' {
   export function seaDropM(): number
   // A debug view of a seed's proto-language, as JSON (language/mod.rs `sample`).
   export function languageSample(seed: number): string
+  // THE LANGUAGES' view of a history's packed tree, as JSON (languages.rs
+  // `Languages::view`; screens/incubator/languageView.ts LanguagesMade).
+  export function languageView(peopleLanguage: Int32Array, parent: Int32Array, level: Uint8Array, people: Int32Array, from: Float32Array, at: Float32Array, until: Float32Array, seed: Int32Array, style: Uint8Array, changeStart: Int32Array, changeYear: Uint16Array, change: Uint8Array, changeChoice: Uint8Array, wordStart: Int32Array, wordYear: Uint16Array, wordMeaning: Uint8Array): string
+  // The languages' tree of peoples given as arrays, as JSON: the packed
+  // arrays and the log's events (languages.rs `tree_json`). For the
+  // languages harness.
+  export function languagesOfPeoples(parent: Int32Array, group: Int32Array, born: Float64Array, ended: Float64Array, mergedInto: Int32Array, big: Uint8Array, share: Float64Array, replaced: Uint8Array, heart: Int32Array, heartApart: Int32Array, seed: number, start: number, end: number): string
   export class Incubator {
     constructor(sphere: boolean, spacingKm: number, width: number, height: number, nodes: Int32Array, nodeW: number, nodeH: number, land: Uint8Array, biome: Uint8Array, koppen: Uint8Array, z: Float32Array, lakeDepth: Float32Array, ecology: Uint8Array, ecologyPresent: number, riverPoints?: Float32Array, riverLengths?: Uint32Array, riverRegimes?: Uint8Array, shelfCarrying?: Uint8Array, volcanoes?: Float64Array)
     free(): void

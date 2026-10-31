@@ -45,6 +45,33 @@ pub struct Change {
     /// The member of a set in REPLACEMENT that has no set of the same
     /// size in TARGET (`∅ > {u,e}`).
     choice: usize,
+    /// By sound of the kit's table: whether TARGET may begin at it. A word
+    /// with none of them the change leaves as it is (`may_change`).
+    starts: Vec<bool>,
+}
+
+// Whether a unit may match from sound p on: more often than it does (the
+// environment, a set member's rest and a restriction are not looked at),
+// never less.
+fn may_start(kit: &Kit, unit: &Unit, p: Phoneme) -> bool {
+    match unit {
+        Unit::Sound(q) => *q == p,
+        Unit::Set(members) => members
+            .iter()
+            .any(|m| m.first().is_none_or(|u| may_start(kit, u, p))),
+        Unit::Indexed(inner, _) | Unit::Restrict(inner, _) => may_start(kit, inner, p),
+        Unit::Class(_) => [None, Some(0)].into_iter().any(|stress| {
+            let sounds = [p];
+            let ctx = Ctx {
+                sounds: &sounds,
+                stress,
+            };
+            options(kit, unit, ctx, 0, Dir::Forward, &Bindings::default())
+                .iter()
+                .any(|o| o.0 == 1)
+        }),
+        Unit::Edge | Unit::Zero | Unit::Any | Unit::Optional(_) | Unit::Star(_) => true,
+    }
 }
 
 fn environment(kit: &Kit, text: &str) -> Result<(Vec<Unit>, Vec<Unit>), String> {
@@ -141,7 +168,12 @@ impl Change {
             .iter()
             .map(|r| parse_units(kit, r))
             .collect::<Result<Vec<_>, _>>()?;
+        let first = target.first().map(|(u, _)| u.clone()).unwrap_or(Unit::Zero);
+        let starts = (0..kit.sounds.len())
+            .map(|k| may_start(kit, &first, Phoneme(k as u8)))
+            .collect();
         Ok(Change {
+            starts,
             id: t.id.clone(),
             family: t.family.clone(),
             weight: super::kit::weight(t.weight),
@@ -176,6 +208,12 @@ impl Change {
             choice: k,
             ..self.clone()
         }
+    }
+
+    /// False where the change leaves the word as it is: none of its sounds
+    /// is one TARGET may begin at. True does not say it changes it.
+    pub fn may_change(&self, word: &[Phoneme]) -> bool {
+        self.insertion() || word.iter().any(|p| self.starts[p.0 as usize])
     }
 
     /// True when the inventory has what the change needs (`requires`).

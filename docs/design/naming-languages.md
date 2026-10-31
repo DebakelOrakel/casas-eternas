@@ -172,3 +172,10 @@ DEC-0054 (TEG-135, the same day).
 seed (sounds, syllables, stress, lexicon, grammar of names, spelling),
 the name as a recipe, and one sound change applied to a word. The tree
 of the languages and the window's wiring are not built.
+2026-10-31: the tree of the languages is built (TEG-138,
+`engine/crates/casas-incubator/src/languages.rs`): with the history (H1),
+a family for each group of step 1, a language where a people lived
+1 500 years apart and was big, a dialect for each big people, with
+dated sound changes and new words; kept in H1 as the choices made (some
+50 to 80 KB a world), the forms derived from them. Its arising and its
+end are events of the log. The window shows it.

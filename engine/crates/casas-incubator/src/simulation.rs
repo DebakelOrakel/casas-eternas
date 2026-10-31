@@ -58,6 +58,7 @@ use crate::eruptions::{
     eruptions_of,
 };
 use crate::habitat::{ARABLE, COPPER, FISH, Habitat, PASTURE, km_between, latitude_deg};
+use crate::languages::{Languages, PeopleInput};
 use crate::log::{LogEvent, POPULATION_MARKS};
 use crate::peoples::{Traits, Tree};
 use crate::peopling::Peopling;
@@ -693,6 +694,10 @@ pub struct SimulationResult {
     /// their ids that last and their measures at each kept state (`kept`,
     /// aligned). Packed since v3 (pack.rs). Its events in `log`.
     pub tree: Tree,
+    /// THE LANGUAGES (languages.rs, TEG-138): the tree of the families,
+    /// languages and dialects, and each people's node. Packed since
+    /// 2026-10-31 (v6), after the goods. Its events in `log`.
+    pub languages: Languages,
     /// The cells whose traits the fields replaced; the branches' splits
     /// (peoples.rs).
     pub replaced: u32,
@@ -3224,6 +3229,10 @@ pub fn simulate(
         sim.tree_frame(&mut tree, &kept[kept.len() - 1].people, end, true);
     }
     tree.finish(&mut sim.log);
+    // THE LANGUAGES (languages.rs): their tree from the peoples', their
+    // events after the peoples'.
+    let (languages, told) = Languages::build(&PeopleInput::of_tree(&tree), input.seed, t0, end);
+    sim.log.extend(told);
     population.truncate(((end - t0) / POPULATION_STEP) as usize + 1);
     let mut result = SimulationResult {
         arrival: sim.arrival,
@@ -3271,6 +3280,7 @@ pub fn simulate(
         traits: sim.traits.values,
         trait_frames,
         tree,
+        languages,
         goods: Goods::default(),
     };
     // WHERE THE GOODS CAME FROM: the settlement of the history, as the
