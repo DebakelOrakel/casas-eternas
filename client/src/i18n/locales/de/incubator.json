@@ -21,6 +21,8 @@
   "incubator.people.seaLow.help": "Wie tief das Meer in der kältesten Zeit sinkt; das bestimmt die Landbrücken.",
   "incubator.peopling.groups.label": "Abstammung",
   "incubator.peopling.groups.help": "Die Abstammung: Äste der Ausbreitung aus Schritt 1, die sich getrennt haben; eine Farbe je Ast. Die Völker von Schritt 2 gehen aus ihnen hervor; in der Welt weiss niemand davon.",
+  "incubator.peopling.languages.label": "Sprachen",
+  "incubator.peopling.languages.help": "Die Sprachen der Völker zur gezeigten Zeit: eine Farbe je Familie, ihre Sprachen in deren Abstufungen; dünne Linien trennen die Dialekte. Eine im Sprachfenster gewählte Sprache hebt sich ab.",
   "incubator.people.peoples.label": "Völker",
   "incubator.people.peoples.help": "Die Völker: zusammenhängende Gebiete, deren Menschen sich begegnen und darum ähnlich bleiben. Verwandte Völker haben ähnliche Farben.",
   "incubator.people.peoplesDetail": "Volk {id} · {people} Menschen · {farmers} Bauern",

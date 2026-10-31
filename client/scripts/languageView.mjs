@@ -48,6 +48,11 @@
 //    pattern nearby share its head and are the nearest of those (on the
 //    torus). The fixture's Keldisch, Orrisch and Vellisch compare, and
 //    Keldfurt has its story and its pattern nearby.
+// 8. The languages' overlay (TEG-148, incubatorOverlay.ts paintLanguages):
+//    on the trees of 1., a cell for each people at each kept state: every
+//    such cell is painted, in a shade of its family's hue; a node chosen
+//    in the panel makes its cells stand out, and their people are exactly
+//    the view's speakers of it then.
 import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -64,6 +69,7 @@ const M = {
   windows: await L('/src/ui/windows/windowSet.ts'),
   types: await L('/src/ui/languagePanel/languageTypes.ts'),
   compare: await L('/src/ui/languagePanel/languageCompare.ts'),
+  overlay: await L('/src/screens/incubator/incubatorOverlay.ts'),
 }
 
 // The incubator's WASM build (engine/dist/incubator, `make engine`).
@@ -524,6 +530,70 @@ for (const seed of [1, 7, 2840]) {
   book.free()
   check(`seed ${seed}: the book gives a place's name, its older names and its exonyms`, place.name === M.view.nameAt(names, taken, made.end) && place.older.length === names.chain[taken].length - 1 && place.older[0][0] === first.form)
   console.log(`  seed ${seed}: e.g. ${names.chain[taken].map((e) => `"${e.form}" (${HOW[e.how] ?? 'first'})`).join(' → ')}`)
+}
+
+// --- 8. the languages' overlay ----------------------------------------------
+
+console.log('8. the languages\' overlay (incubatorOverlay.ts paintLanguages)')
+// The hue of a colour, in degrees; null for a grey.
+const hueOf = (r, g, b) => {
+  const max = Math.max(r, g, b)
+  const c = max - Math.min(r, g, b)
+  if (c === 0) return null
+  const h = max === r ? ((g - b) / c) % 6 : max === g ? (b - r) / c + 2 : (r - g) / c + 4
+  return ((60 * h) % 360 + 360) % 360
+}
+const hueApart = (a, b) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b))
+for (const seed of [1, 7]) {
+  const made = makeHistory(seed)
+  const { languages, events } = languagesOf(made, seed)
+  const history = { ...made, log: [...made.log, ...events].sort((a, b) => a.at - b.at), languages }
+  const { tree } = history
+  const ltree = languages.tree
+  const view = M.view.deriveLanguageView(history)
+  const colours = M.overlay.languageColours(ltree)
+  const NONE = 0xffff
+  // The families' hues apart, and each node's a family's.
+  const familyHues = []
+  for (let k = 0; k < ltree.level.length; k++) if (ltree.level[k] === 0) familyHues.push(hueOf(colours[3 * k], colours[3 * k + 1], colours[3 * k + 2]))
+  const closest = Math.min(...familyHues.flatMap((a, i) => familyHues.slice(i + 1).map((b) => hueApart(a, b))))
+  check(`seed ${seed}: ${familyHues.length} families, each its own hue (the closest ${closest.toFixed(0)}° apart)`, familyHues.length > 1 && closest >= 10)
+  let unpainted = ''
+  let chosenWrong = ''
+  let chosenTried = 0
+  for (const k of [Math.floor(view.times.length / 2), view.times.length - 1]) {
+    // A cell for each people living at state k, in a row; a raster of one
+    // texel a cell, two rows high, so every texel has a neighbour.
+    const rows = []
+    for (let p = 0; p < tree.parent.length; p++) for (let r = tree.frameStart[p]; r < tree.frameStart[p + 1]; r++) if (tree.frame[r] === k) rows.push({ p, people: tree.people[r] })
+    const ids = Uint16Array.from(rows, (x) => x.p)
+    const width = rows.length
+    const raster = () => ({ data: new Uint8ClampedArray(4 * width * 2), width, height: 2, owners: Int32Array.from({ length: 2 * width }, (_, t) => t % width), count: width, u: new Float32Array(width), v: new Float32Array(width) })
+    const spoken = Int32Array.from({ length: tree.parent.length }, (_, p) => M.view.spokenNode(ltree, p, view.times[k]))
+    const o = raster()
+    M.overlay.paintLanguages(o, ids, NONE, spoken, colours, null)
+    for (let c = 0; c < width; c++) {
+      const node = spoken[ids[c]]
+      const family = M.view.familyOf(ltree, node)
+      const h = hueOf(o.data[4 * c], o.data[4 * c + 1], o.data[4 * c + 2])
+      const want = hueOf(colours[3 * family], colours[3 * family + 1], colours[3 * family + 2])
+      if (node < 0 || o.data[4 * c + 3] === 0 || h === null || hueApart(h, want) > 3) unpainted ||= `state ${k}, people ${ids[c]}: node ${node}, hue ${h} for ${want}`
+    }
+    // Each node spoken then, chosen: its cells stand out, the rest fade.
+    for (const node of view.nodes) {
+      if (!(node.speakers[k] > 0)) continue
+      const chosen = M.view.speakersOf(ltree, node.id)
+      const c = raster()
+      M.overlay.paintLanguages(c, ids, NONE, spoken, colours, chosen)
+      let people = 0
+      for (let t = 0; t < width; t++) if (c.data[4 * t + 3] > 0.8 * 255) people += rows[t].people
+      else if (c.data[4 * t + 3] > 0.3 * 255) chosenWrong ||= `${node.id} at ${k}: a texel neither chosen nor faded`
+      chosenTried++
+      if (!near(people, node.speakers[k])) chosenWrong ||= `${node.id} at ${k}: ${people} people stand out, ${node.speakers[k]} speak it`
+    }
+  }
+  check(`seed ${seed}: every lived cell at a kept state is painted in its family's hue`, unpainted === '', unpainted)
+  check(`seed ${seed}: the cells of a node chosen (${chosenTried} tried) hold exactly its speakers`, chosenWrong === '' && chosenTried > 0, chosenWrong)
 }
 
 check('the torus distance wraps', near(M.types.torusDistance({ u: 0.01, v: 0.98 }, { u: 0.99, v: 0.02 }, 2), Math.hypot(0.04, 0.04)))

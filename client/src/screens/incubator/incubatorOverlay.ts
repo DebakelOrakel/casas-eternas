@@ -1,5 +1,6 @@
 import type { WashTarget } from '../../map/climateLayers'
 import type { PeopleResult } from './cellsShared'
+import { LANGUAGE_LEVEL, type LanguagesTree } from './historyPack'
 import { PLANT_SUITS_CODE } from './settleShared'
 
 // THE INCUBATOR'S OVERLAY (2026-10-25): what the steps draw over the chart
@@ -210,6 +211,71 @@ export function paintPeoples(o: OverlayRaster, ids: Uint16Array, colours: Uint8A
     const id = ids[o.owners[k]]
     if (id === none || 3 * id >= colours.length) continue
     put(o, 4 * k, colours[3 * id], colours[3 * id + 1], colours[3 * id + 2], 0.75)
+  }
+}
+
+// THE LANGUAGES (2026-10-31, TEG-148; historyPack.ts LanguagesTree): a
+// colour per tree node, 3 bytes each. A family has a hue of its own, the
+// golden angle apart from family to family in the tree's order; its
+// proto-language and its languages are shades of it, the lightness
+// stepping through LANGUAGE_LIGHTNESS by the language's index in its
+// family (the proto-language first), over again past its end; a dialect
+// takes its language's colour (the borders tell the dialects apart).
+const LANGUAGE_LIGHTNESS = [0.45, 0.32, 0.58, 0.26, 0.65, 0.38, 0.52]
+const LANGUAGE_SATURATION = 0.6
+export function languageColours(tree: LanguagesTree): Uint8Array {
+  const count = tree.parent.length
+  const out = new Uint8Array(3 * count)
+  const hue = new Float32Array(count)
+  const index = new Int32Array(count)
+  let families = 0
+  for (let k = 0; k < count; k++) {
+    if (tree.level[k] === LANGUAGE_LEVEL.family) {
+      hue[k] = (families++ * 137.508) % 360
+      index[k] = 1
+      out.set(hsl(hue[k], LANGUAGE_SATURATION, LANGUAGE_LIGHTNESS[0]), 3 * k)
+    } else if (tree.level[k] === LANGUAGE_LEVEL.language) {
+      let family = k
+      while (tree.parent[family] >= 0) family = tree.parent[family]
+      hue[k] = hue[family]
+      out.set(hsl(hue[k], LANGUAGE_SATURATION, LANGUAGE_LIGHTNESS[index[family]++ % LANGUAGE_LIGHTNESS.length]), 3 * k)
+    } else {
+      out.copyWithin(3 * k, 3 * tree.parent[k], 3 * tree.parent[k] + 3)
+    }
+  }
+  return out
+}
+
+// The languages of a kept state onto the overlay: each cell of a people
+// (`ids`, `none` where none) in the colour of the tree node it speaks
+// (`spoken`, by people id: languageView.ts spokenNode; -1 for none). A
+// texel whose right or lower neighbour is a cell of another node is
+// darkened: the thin lines between the dialects. `chosen`, by tree node,
+// 1 where the node is the one chosen in the languages window or below it
+// (languageView.ts speakersOf): those stand out, the rest fade; null for
+// no choice.
+const LANGUAGE_ALPHA = 0.75
+const LANGUAGE_CHOSEN_ALPHA = 0.85
+const LANGUAGE_FADED_ALPHA = 0.2
+const LANGUAGE_BORDER = 0.55
+export function paintLanguages(o: OverlayRaster, ids: Uint16Array, none: number, spoken: Int32Array, colours: Uint8Array, chosen: Uint8Array | null): void {
+  const nodeOf = (t: number): number => {
+    const id = ids[o.owners[t]]
+    return id === none || id >= spoken.length ? -1 : spoken[id]
+  }
+  const { width, height } = o
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const t = y * width + x
+      const k = nodeOf(t)
+      if (k < 0 || 3 * k >= colours.length) continue
+      // The world wraps: the last column's right is the first.
+      const right = nodeOf(y * width + ((x + 1) % width))
+      const below = nodeOf(((y + 1) % height) * width + x)
+      const edge = (right >= 0 && right !== k) || (below >= 0 && below !== k) ? LANGUAGE_BORDER : 1
+      const alpha = chosen === null ? LANGUAGE_ALPHA : chosen[k] ? LANGUAGE_CHOSEN_ALPHA : LANGUAGE_FADED_ALPHA
+      put(o, 4 * t, colours[3 * k] * edge, colours[3 * k + 1] * edge, colours[3 * k + 2] * edge, alpha)
+    }
   }
 }
 

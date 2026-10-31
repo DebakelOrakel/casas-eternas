@@ -6,6 +6,7 @@ The incubator's controls and layout are in [ui.md](./ui.md).
 
 ## 2026-10-31
 - **changed** Peoples: the made names are shorter and repeat their sounds less, and related languages keep more of their basic words while their sounds change faster. `language.world.names`
+- **new** Peoples: an overlay colours the land by the peoples' languages, a colour per family, and makes a language chosen in the languages window stand out. `incubator.peopling.languages`
 - **new** Peoples: the languages window compares the words of related languages and follows a place's name through its parts and its forms over time. `language.tab.compare`
 - **new** Peoples: a people that takes a place keeps its old name or gives it a new one, and the peoples call their neighbours' places by names of their own; the languages window shows both. `language.world.names`
 - **new** Chronicle: the landmasses have the names their first peoples gave them, and the languages window lists the names of the villages, rivers, mountains and lakes given in each language. `language.world.names`

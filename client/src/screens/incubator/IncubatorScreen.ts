@@ -62,7 +62,7 @@ import type { LogEvent } from './historyLogShared'
 import { CAME_STEP, clearedAt, clearedOf, densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
 import { campPictures, campSymbols, cellPoint, centrePictures, hamletPictures, hamletSymbols, isCampWay, crossingPictures, crossingSymbols, originPictures, routePictures, routeSymbols, sourcePictures, tradePictures, tradeSymbols, villagePictures, villageSymbols, type LineGeometry } from './incubatorSymbols'
-import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintGroups, paintLifeways, paintPeople, paintPeoples, peopleColours, putTexel, washTarget, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
+import { clearOverlay, languageColours, OVERLAY_DIVISOR, paintDensity, paintGroup, paintGroups, paintLanguages, paintLifeways, paintPeople, paintPeoples, peopleColours, putTexel, washTarget, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
 import type { LegendItem, LegendSpec } from '../../ui/legend/LegendPanel'
 import type { ProbeRow } from '../../ui/mapProbe/probeCard'
 import type { World } from '../../world/query'
@@ -70,7 +70,7 @@ import type { ChartPoint } from '../../map/worldView'
 import type { IncubatorAnswer, IncubatorRequest, PeoplesWithoutIds, PeoplingControls } from './incubatorWorker'
 import { NAME_KINDS, NO_PEOPLE } from './historyPack'
 import { createChroniclePanel, type ChronicleEvent } from './chroniclePanel'
-import { deriveLanguageView, nameAt, peopleCentre, type HistoryLanguages, type LanguagePlaces } from './languageView'
+import { deriveLanguageView, familyOf, nameAt, peopleCentre, speakersOf, spokenNode, type HistoryLanguages, type LanguagePlaces } from './languageView'
 import { cellInputOf, CHART_HEIGHT, CHART_WIDTH, rainOf, type HistoryRain } from './historyInput'
 import { createLegendPanel } from '../../ui/legend/LegendPanel'
 import { createProgressPill } from '../../ui/progressPill/ProgressPill'
@@ -120,7 +120,7 @@ const STEPS = ['oldStoneAge', 'newStoneAge'] as const
 // choice, the first listed).
 const FAVOURITES: Record<(typeof STEPS)[number], readonly string[]> = {
   oldStoneAge: ['people:routes', 'people:centres', 'settle:spread', 'settle:groups', 'settle:density'],
-  newStoneAge: ['people:routes', 'people:villages', 'people:centres', 'settle:lifeway', 'settle:density'],
+  newStoneAge: ['people:routes', 'people:villages', 'people:centres', 'settle:lifeway', 'settle:density', 'settle:languages'],
 }
 
 // The ecology's fields the incubator shows: all fourteen the level's
@@ -251,7 +251,7 @@ function createIncubatorClient(): { ask(request: IncubatorRequest): Promise<Incu
 // The lifeways' names (settleShared.ts LIFEWAY).
 const LIFEWAY_KEYS: Record<number, TKey> = { 1: 'incubator.lifeway.foragers', 2: 'incubator.lifeway.fishers', 3: 'incubator.lifeway.herders', 4: 'incubator.lifeway.farmers' }
 
-type Settlement = 'spread' | 'groups' | 'peoples' | 'lifeway' | 'density'
+type Settlement = 'spread' | 'groups' | 'peoples' | 'languages' | 'lifeway' | 'density'
 
 export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
   // THE SCENES. Before a world is shown, an empty white page; then the
@@ -330,9 +330,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // is the history's languages (languageView.ts; showLanguages), or the
   // fixture (`?languages=fixture`, below).
   const languagePanel = createLanguagePanel(root, {
-    // The map's colouring of the peoples selected comes with the languages
-    // of the world (a later step of TEG-135 ff.).
-    onSelect: () => {},
+    // The node chosen stands out on the map's languages (TEG-148), while
+    // that overlay is on.
+    onSelect: (id) => {
+      languageChosen = id
+      if (settlementShown === 'languages') showPlants()
+    },
     onShowOnMap: (target) => {
       if (!overlay) return
       const tree = peoples?.tree
@@ -345,6 +348,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The time as the chronicle starts (peopleTime, below).
   languagePanel.setTime(SPAN_YEARS)
   let languageView: LanguageView | null = null
+  // The view's node chosen in the languages panel, null for none.
+  let languageChosen: string | null = null
   // The tree and the log the view was made from, to make it again only
   // when one of them changes.
   let languagesFrom: { tree: unknown; log: unknown } = { tree: null, log: null }
@@ -376,6 +381,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     languagesFrom = { tree, log }
     languageView = tree && log && historyTime && peoples ? deriveLanguageView({ tree, log, start: historyTime.start, end: historyTime.end, languages: peoples.languages }, languagePlaces()) : null
     languagePanel.setView(languageView)
+    // The panel drops a choice its new view has not; so does the map.
+    if (languageChosen !== null && !languageView?.nodes.some((n) => n.id === languageChosen)) languageChosen = null
   }
 
   // THE STEPS. They compute and say what they did; the layers are the
@@ -562,8 +569,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let historyTime: { start: number; end: number } | null = null
   // THE PEOPLES (2026-10-29): the history's peoples' tree (historyPack.ts
   // PeoplesTree; each kept state's ids come with the state, HistoryFrame
-  // `peoples`) and a colour per people (incubatorOverlay.ts peopleColours).
-  let peoples: { tree: PeoplesWithoutIds; colours: Uint8Array; languages: HistoryLanguages } | null = null
+  // `peoples`) and a colour per people (incubatorOverlay.ts peopleColours);
+  // the history's languages and a colour per node of their tree
+  // (incubatorOverlay.ts languageColours).
+  let peoples: { tree: PeoplesWithoutIds; colours: Uint8Array; languages: HistoryLanguages; languageColours: Uint8Array } | null = null
   // The chronicle's range: from the departure to the step's end — the old
   // stone age's in its step, the history's after it (2026-10-28: one
   // chronicle, each step's built on the one before).
@@ -740,7 +749,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       case 'sea': return (SEA_LAYERS as readonly string[]).includes(id) && refinedCharts !== null
       case 'weather': return (WEATHER_LAYERS as readonly string[]).includes(id) && refinedCharts !== null
       case 'resources': return ecology?.fields[id.slice(resourceLayerId('' as EcologyFieldId).length) as EcologyFieldId] !== undefined
-      case 'settlement': return id === 'settle:spread' ? stone !== null || people !== null : id === 'settle:groups' ? stone !== null : id === 'settle:peoples' ? peoples !== null && historyShown() : id === 'settle:density' ? stone !== null || settled !== null : settled !== null
+      case 'settlement': return id === 'settle:spread' ? stone !== null || people !== null : id === 'settle:groups' ? stone !== null : id === 'settle:peoples' ? peoples !== null && historyShown() : id === 'settle:languages' ? peoples !== null && historyShown() && peoples.languages.tree.parent.length > 0 : id === 'settle:density' ? stone !== null || settled !== null : settled !== null
       default: return charts !== null
     }
   }
@@ -1753,7 +1762,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     peopleInput = restore ? restore.input : peoplingInput(done.origin, controls)
     people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin, crossings: done.crossings, crossingWays: done.crossingWays }
     historyTime = { start: done.start, end: done.end }
-    peoples = { tree: done.peoples, colours: peopleColours(done.peoples.group), languages: done.languages }
+    peoples = { tree: done.peoples, colours: peopleColours(done.peoples.group), languages: done.languages, languageColours: languageColours(done.languages.tree) }
     showTimeRange()
     historyFrames = new Map()
     framesAsked.clear()
@@ -2095,6 +2104,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         if (stone && settlementShown === 'groups') paintGroups(o, stone.people, stone.group, peopleTime)
         const ids = peoples && settlementShown === 'peoples' ? frameNow()?.peoples : null
         if (ids) paintPeoples(o, ids, peoples!.colours, NO_PEOPLE)
+        const speech = settlementShown === 'languages' ? languagesNow() : null
+        if (speech) paintLanguages(o, speech.ids, NO_PEOPLE, speech.spoken, peoples!.languageColours, speech.chosen)
         const density = !historyShown() && stone && settlementShown === 'density' ? stoneDensityNow() : null
         if (density) paintDensity(o, density)
       },
@@ -2109,6 +2120,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           }))
           return [{ type: 'swatches', title: t('incubator.peopling.groups.label'), items }]
         }
+        // The families spoken at the kept state shown, in their colours.
+        const speech = settlementShown === 'languages' ? languagesNow() : null
+        if (speech) {
+          const { tree, made } = peoples!.languages
+          const colours = peoples!.languageColours
+          const families = [...new Set(Array.from(speech.spoken, (k) => (k < 0 ? -1 : familyOf(tree, k))).filter((f) => f >= 0))].sort((a, b) => a - b)
+          return [{ type: 'swatches', title: t('incubator.peopling.languages.label'), items: families.map((f) => ({ label: made.nodes[f]?.name ?? '', rgb: [colours[3 * f], colours[3 * f + 1], colours[3 * f + 2]] as [number, number, number] })) }]
+        }
         if (!spreadShown() || (!spreadOn && !routesOn())) return []
         const routes = routesOn() ? [{ label: t('incubator.people.routes.label'), rgb: [...PEOPLE_ROUTE] as [number, number, number], shape: 'line' as const }] : []
         // The ramp as the years before the game the land was settled.
@@ -2118,6 +2137,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       },
       probe: (cell) => {
         if (settlementShown === 'peoples') return peoplesProbe(cell)
+        if (settlementShown === 'languages') {
+          const speech = languagesNow()
+          const id = speech?.ids[cell] ?? NO_PEOPLE
+          const k = speech && id !== NO_PEOPLE && id < speech.spoken.length ? speech.spoken[id] : -1
+          return k >= 0 ? [{ label: t('incubator.peopling.languages.label'), value: peoples!.languages.made.nodes[k]?.name ?? '' }] : []
+        }
         return stone && settlementShown === 'groups' && stone.group[cell] >= 0 && stone.people.arrival[cell] <= peopleTime ? [{ label: t('incubator.peopling.groups.label'), value: String(stone.group[cell] + 1) }] : []
       },
     },
@@ -2159,6 +2184,22 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
   ]
   const activeTrials = (): TrialLayer[] => TRIALS.filter((l) => l.on())
+  // THE LANGUAGES at the kept state shown (TEG-148): each cell's people id,
+  // the tree node each people speaks then (languageView.ts spokenNode), and
+  // the nodes of the one chosen in the languages panel (speakersOf; null
+  // for none). Made for the state and the choice and kept for them.
+  let languagesAt: { frame: HistoryFrame; chosenId: string | null; ids: Uint16Array; spoken: Int32Array; chosen: Uint8Array | null } | null = null
+  function languagesNow(): { ids: Uint16Array; spoken: Int32Array; chosen: Uint8Array | null } | null {
+    const frame = peoples ? frameNow() : null
+    if (!peoples || !frame?.peoples || peoples.languages.tree.parent.length === 0) return null
+    if (languagesAt?.frame === frame && languagesAt.chosenId === languageChosen) return languagesAt
+    const tree = peoples.languages.tree
+    const year = frameTime(frame.index)
+    const spoken = Int32Array.from({ length: peoples.tree.parent.length }, (_, p) => spokenNode(tree, p, year))
+    const chosen = languageChosen === null || languageFixture ? null : speakersOf(tree, languageChosen)
+    languagesAt = { frame, chosenId: languageChosen, ids: frame.peoples, spoken, chosen }
+    return languagesAt
+  }
   // The people of a cell at the kept state shown: its id (from 1, as the
   // groups'), its people, its farmers' share.
   function peoplesProbe(cell: number): ProbeRow[] {

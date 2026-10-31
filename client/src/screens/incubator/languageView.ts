@@ -164,6 +164,41 @@ const protoId = (k: number): string => `f${k}p`
 // The view's node a people speaks in when it speaks tree node k without a
 // dialect: a language, or a family's proto-language.
 const spokenId = (tree: LanguagesTree, k: number): string => (tree.level[k] === LANGUAGE_LEVEL.family ? protoId(k) : viewId(tree, k))
+// The view's node of a tree node a people speaks: a dialect's own, else
+// the language or the proto-language.
+const nodeIdOf = (tree: LanguagesTree, k: number): string => (tree.level[k] === LANGUAGE_LEVEL.dialect ? viewId(tree, k) : spokenId(tree, k))
+// The family of tree node k.
+export function familyOf(tree: LanguagesTree, k: number): number {
+  while (tree.parent[k] >= 0) k = tree.parent[k]
+  return k
+}
+
+// The tree node people p speaks in `year`: its node (`peopleLanguage`),
+// but a people whose language arose from it speaks, before then, the
+// language it came from (the tree's `at`); -1 for a people of no node.
+export function spokenNode(tree: LanguagesTree, p: number, year: number): number {
+  const k = p < tree.peopleLanguage.length ? tree.peopleLanguage[p] : -1
+  if (k < 0) return -1
+  const language = tree.level[k] === LANGUAGE_LEVEL.dialect ? tree.parent[k] : k
+  const founder = tree.level[language] === LANGUAGE_LEVEL.language && tree.people[language] === p
+  return founder && year < tree.at[language] ? tree.parent[language] : k
+}
+
+// The tree nodes whose speakers speak the view's node `id` (a family, a
+// proto-language, a language or a dialect) or a node below it in the
+// view: 1 by tree node. Null for an id that is no node of the tree.
+export function speakersOf(tree: LanguagesTree, id: string): Uint8Array | null {
+  const out = new Uint8Array(tree.parent.length)
+  let any = false
+  for (let k = 0; k < out.length; k++) {
+    const dialect = tree.level[k] === LANGUAGE_LEVEL.dialect
+    if (nodeIdOf(tree, k) === id || (dialect && spokenId(tree, tree.parent[k]) === id) || viewId(tree, familyOf(tree, k)) === id) {
+      out[k] = 1
+      any = true
+    }
+  }
+  return any ? out : null
+}
 
 // `places`, where the screen has them: the names' stories (the worker's
 // book, TEG-141: null where it has none), and where the cells lie
@@ -179,10 +214,6 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
   const { tree, made } = history.languages
   const times = keptTimes(history.start, history.end)
   const count = tree.parent.length
-  const familyOf = (k: number): number => {
-    while (tree.parent[k] >= 0) k = tree.parent[k]
-    return k
-  }
   // The ends the log tells.
   const peopleEnd = peopleEnds(log)
   const languageEnd = new Map<number, number>()
@@ -206,7 +237,7 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
       add({ id: viewId(tree, k), level: 'family', parent: null, name, proto: false, born: tree.from[k], ended })
       add({ id: protoId(k), level: 'language', parent: viewId(tree, k), name, proto: true, born: tree.from[k], ended })
     } else if (level === LANGUAGE_LEVEL.language) {
-      add({ id: viewId(tree, k), level: 'language', parent: viewId(tree, familyOf(k)), name, proto: false, born: tree.at[k], ended: languageEnd.get(k) ?? null })
+      add({ id: viewId(tree, k), level: 'language', parent: viewId(tree, familyOf(tree, k)), name, proto: false, born: tree.at[k], ended: languageEnd.get(k) ?? null })
     } else {
       const parent = spokenId(tree, tree.parent[k])
       const born = Math.max(tree.from[k], nodes[position.get(parent)!].born)
@@ -219,16 +250,13 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
   for (let p = 0; p < peopleCount; p++) {
     const k = tree.peopleLanguage[p]
     if (k < 0) continue
-    const own = position.get(tree.level[k] === LANGUAGE_LEVEL.dialect ? viewId(tree, k) : spokenId(tree, k))!
-    // Its language, and whether it arose from this people: before then
-    // the people speaks the language it came from.
-    const language = tree.level[k] === LANGUAGE_LEVEL.dialect ? tree.parent[k] : k
-    const founder = tree.level[language] === LANGUAGE_LEVEL.language && tree.people[language] === p
-    const before = founder ? position.get(spokenId(tree, tree.parent[language]))! : own
+    const own = position.get(nodeIdOf(tree, k))!
     for (let r = peoplesTree.frameStart[p]; r < peoplesTree.frameStart[p + 1]; r++) {
       const f = peoplesTree.frame[r]
       if (f >= times.length) continue
-      const at0 = founder && times[f] < tree.at[language] ? before : own
+      // Before its language arose from it, the people speaks the one it
+      // came from (spokenNode).
+      const at0 = position.get(nodeIdOf(tree, spokenNode(tree, p, times[f])))!
       for (let at = at0; at >= 0; at = parentOf[at]) nodes[at].speakers[f] += peoplesTree.people[r]
     }
     if (peoplesTree.big[p]) for (let at = own; at >= 0; at = parentOf[at]) nodes[at].peoples.push(p)
@@ -238,14 +266,13 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
   // year under the node of the entry current then (another people that
   // took the place gave it its name since: TEG-143).
   const names = history.languages.names
-  const nodeIdOf = (k: number): string => (tree.level[k] === LANGUAGE_LEVEL.dialect ? viewId(tree, k) : spokenId(tree, k))
   const namesOf = new Map<string, [number, number][]>()
   if (names) {
     const given: [number, number][] = []
     names.chain.forEach((chain, j) => chain.forEach((_, c) => given.push([j, c])))
     given.sort(([a, c], [b, d]) => names.chain[a][c].year - names.chain[b][d].year || a - b || c - d)
     for (const [j, c] of given) {
-      for (let at = position.get(nodeIdOf(names.chain[j][c].namer)) ?? -1; at >= 0; at = parentOf[at]) {
+      for (let at = position.get(nodeIdOf(tree, names.chain[j][c].namer)) ?? -1; at >= 0; at = parentOf[at]) {
         const list = namesOf.get(nodes[at].id)
         if (list) list.push([j, c])
         else namesOf.set(nodes[at].id, [[j, c]])
@@ -260,9 +287,9 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
     const chain = names!.chain[j]
     // Its older names, the latest first; its exonyms by then.
     // An older name's `how`: what the people after did with it.
-    const older: OtherName[] = chain.slice(0, c).map((e, i) => ({ name: e.form, language: nodeIdOf(e.namer), how: NAME_HOW[chain[i + 1].how] })).reverse()
-    const exonyms: OtherName[] = names!.exonyms[j].filter((e) => e.year <= year).map((e) => ({ name: formIn(e, year), language: nodeIdOf(e.namer), how: NAME_HOW[e.how] }))
-    return { name: nameAt(names!, j, year) ?? '', kind: kind === 'village' && names!.town[j] ? 'town' : kind, language: nodeIdOf(chain[c].namer), cell: names!.cell[j], given: chain[c].year, older, exonyms, index: j, head: chain[c].head }
+    const older: OtherName[] = chain.slice(0, c).map((e, i) => ({ name: e.form, language: nodeIdOf(tree, e.namer), how: NAME_HOW[chain[i + 1].how] })).reverse()
+    const exonyms: OtherName[] = names!.exonyms[j].filter((e) => e.year <= year).map((e) => ({ name: formIn(e, year), language: nodeIdOf(tree, e.namer), how: NAME_HOW[e.how] }))
+    return { name: nameAt(names!, j, year) ?? '', kind: kind === 'village' && names!.town[j] ? 'town' : kind, language: nodeIdOf(tree, chain[c].namer), cell: names!.cell[j], given: chain[c].year, older, exonyms, index: j, head: chain[c].head }
   }
   const detailOf = new Map<string, number>()
   for (let k = 0; k < count; k++) {
@@ -287,7 +314,7 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
       if (!names || !query) return found
       for (let j = 0; j < names.kind.length; j++) {
         if (!listed(j, year)) continue
-        const id = nodeIdOf(names.chain[j][chainAt(names, j, year)].namer)
+        const id = nodeIdOf(tree, names.chain[j][chainAt(names, j, year)].namer)
         if (found.has(id)) continue
         if ((nameAt(names, j, year) ?? '').toLowerCase().includes(query)) found.add(id)
       }
@@ -297,7 +324,7 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
     ...(places.story ? { story: async (row: NameEntry, year: number): Promise<NameStory | null> => {
       if (row.index === undefined) return null
       const raw = await places.story!(row.index, year)
-      return raw ? { language: nodeIdOf(raw.namer), year: raw.year, parts: raw.parts, steps: raw.steps } : null
+      return raw ? { language: nodeIdOf(tree, raw.namer), year: raw.year, parts: raw.parts, steps: raw.steps } : null
     } } : {}),
     ...(places.cellAt ? { cellAt: places.cellAt, aspect: places.aspect ?? 1 } : {}),
   }
