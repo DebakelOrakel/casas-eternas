@@ -159,3 +159,10 @@ built (2026-10-29). 2026-10-30: the three levels (family, language,
 dialect), the name as a recipe, the contact and the user's languages
 written down from a survey of the known tools; the forks above are to
 decide.
+2026-10-31: the hand-made kit is built (f01001fb,
+`engine/crates/casas-incubator/data/language/`): the sounds, the
+syllables, the spellings, the meanings, the patterns and the sound
+changes. The read-only languages window is built (6b8c5216,
+`client/src/ui/languagePanel/`): it shows the tree of the peoples'
+languages, made by a stub engine. The forks above are still open
+(TEG-135).

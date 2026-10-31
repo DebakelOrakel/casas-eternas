@@ -36,6 +36,8 @@
   "common.panel.overlays.help": "Die Liste aller Overlays der Welt ein- oder ausblenden.",
   "common.panel.chronicle.label": "Chronik",
   "common.panel.chronicle.help": "Die Chronik mit ihrer Zeitachse ein- oder ausblenden.",
+  "common.panel.languages.label": "Sprachen",
+  "common.panel.languages.help": "Sprachen der Völker zeigen oder verbergen.",
   "common.panel.save.onServer": "Auf dem Server: Revision {revision}, {when}",
   "common.panel.save.notOnServer": "Noch nicht auf dem Server.",
   "common.world.uid": "UID",

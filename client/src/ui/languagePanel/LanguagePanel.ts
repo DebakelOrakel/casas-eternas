@@ -7,6 +7,8 @@ import { FIRST_NAMES, NAMES_PAGE, renderWorld } from './languageWorld'
 import '../theme/design.css'
 import './languagePanel.css'
 
+export { LANGUAGES_ICON }
+
 // THE LANGUAGES PANEL (2026-10-31, TEG-140, DES-0033): the languages of a
 // world's peoples, read only, after the design canvas (Sprachen.dc.html,
 // Sprachen-Voll.dc.html), light. A pure widget as the layer panel: it
@@ -69,7 +71,7 @@ export function createLanguagePanel(host: HTMLElement, options: {
 
   const head = el('header', 'language-panel__head')
   const mark = el('span', 'language-panel__mark')
-  mark.append(iconOf(LANGUAGES_ICON))
+  mark.append(iconOf(`<path d="${LANGUAGES_ICON}"/>`))
   const title = el('span', 'language-panel__title')
   const summary = el('span', 'language-panel__summary')
   const unfold = el('button', 'language-panel__action language-panel__narrow-only')

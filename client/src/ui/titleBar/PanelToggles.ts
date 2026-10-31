@@ -21,18 +21,18 @@ const ICONS: Record<PanelId, string> = {
   languages: '<path d="M5 7h9M9 7v10M7 17h5"/><path d="M14 20l4-10 4 10M15.4 17h5.2"/>',
 }
 // Each switch's name, and the catalog base of its hover card (`.label`,
-// `.help`). The languages' switch is named by its panel's title and has no
-// card until a `common.panel.languages` base is agreed (TEG-140).
+// `.help`).
 const NAMES: Record<PanelId, TKey> = {
   actions: 'common.panel.actions.label',
   overlays: 'common.panel.overlays.label',
   chronicle: 'common.panel.chronicle.label',
-  languages: 'language.panel.title',
+  languages: 'common.panel.languages.label',
 }
-const HELP: Partial<Record<PanelId, string>> = {
+const HELP: Record<PanelId, string> = {
   actions: 'common.panel.actions',
   overlays: 'common.panel.overlays',
   chronicle: 'common.panel.chronicle',
+  languages: 'common.panel.languages',
 }
 const SHOWN_FIRST: Record<PanelId, boolean> = { actions: true, overlays: true, chronicle: true, languages: false }
 
@@ -60,8 +60,7 @@ export function createPanelToggles(slot: HTMLElement, screen: string, panels: re
     const button = document.createElement('button')
     button.type = 'button'
     button.className = 'panel-toggles__button'
-    const help = HELP[id]
-    if (help) button.dataset.help = help
+    button.dataset.help = HELP[id]
     button.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[id]}</svg>`
     button.addEventListener('click', () => {
       const on = !shown.get(id)

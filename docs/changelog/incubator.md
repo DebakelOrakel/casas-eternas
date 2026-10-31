@@ -5,6 +5,7 @@ settlement, the exchange and the chronicle. See [README](./README.md) for the fo
 The incubator's controls and layout are in [ui.md](./ui.md).
 
 ## 2026-10-31
+- **new** Peoples: a languages panel and window show the tree of the peoples' languages, with placeholder languages until the language core exists. `language.panel.title`
 - **changed** New Stone Age: the fields also spread where only a part of the land is good to farm, as a river's floodplain. `incubator.step.newStoneAge`
 - **changed** Chronicle: a short New Stone Age also tells the splits and merges of the large peoples that held to its end. `incubator.chronicle.event.peopleSplit`
 - **changed** New Stone Age: a much stronger people moves into its neighbours and takes their land, so the peoples keep changing after the spread. `incubator.step.newStoneAge`

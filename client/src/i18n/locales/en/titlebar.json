@@ -40,6 +40,7 @@
   "titlebar.save.open.help": "Open a different world. The world you are working on is replaced.",
   "titlebar.jobs.label": "Jobs",
   "titlebar.jobs.help": "The fine simulation of your worlds on the server: what waits, runs, is done.",
+  "titlebar.languages.label": "Languages",
   "titlebar.menu.label": "Menu",
   "titlebar.menu.help": "Jobs, artifacts, language and account.",
   "titlebar.handbook.label": "Handbook",

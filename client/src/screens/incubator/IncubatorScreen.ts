@@ -31,7 +31,7 @@ import { ARTIFACTS_ICON, createArtifactChooser, reportCommission } from '../../u
 import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
 import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
 import { createLayerPanel } from '../../ui/layerPanel/LayerPanel'
-import { createLanguagePanel } from '../../ui/languagePanel/LanguagePanel'
+import { createLanguagePanel, LANGUAGES_ICON } from '../../ui/languagePanel/LanguagePanel'
 import type { LanguageView } from '../../ui/languagePanel/languageTypes'
 import { createWindowSet } from '../../ui/windows/windowSet'
 import type { LayerState } from '../../ui/layerPanel/layerTypes'
@@ -278,6 +278,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       { key: 'titlebar.handbook', icon: BOOK_ICON, onSelect: () => handbookPanel.open() },
       { key: 'titlebar.jobs', icon: JOBS_ICON, onSelect: () => windows.open(jobChooser) },
       { key: 'common.action.storage', icon: ARTIFACTS_ICON, onSelect: () => windows.open(artifactChooser) },
+      // The languages' full layout, as the window it is (languagePanel, below).
+      { key: 'titlebar.languages', icon: LANGUAGES_ICON, onSelect: () => windows.open(languagePanel) },
     ],
     onLocaleChange: () => {
       sidebar.relabel()

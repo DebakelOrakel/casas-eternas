@@ -36,6 +36,8 @@
   "common.panel.overlays.help": "Show or hide the list of all the world's overlays.",
   "common.panel.chronicle.label": "Chronicle",
   "common.panel.chronicle.help": "Show or hide the chronicle with its time line.",
+  "common.panel.languages.label": "Languages",
+  "common.panel.languages.help": "Show or hide the languages of the peoples.",
   "common.panel.save.onServer": "On the server: revision {revision}, {when}",
   "common.panel.save.notOnServer": "Not on the server yet.",
   "common.world.uid": "UID",

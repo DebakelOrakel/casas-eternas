@@ -32,9 +32,10 @@ export const yearText = (year: number): string => t('incubator.chronicle.year', 
 // The speakers of a node at a time sample.
 export const speakersText = (node: LanguageNode, sample: number): string => formatCount(Math.round(node.speakers[sample] ?? 0))
 
-// The mark of the panel's head: the design canvas's own (Sprachen.dc.html),
-// a stroke on a 24 grid as the title bar's marks.
-export const LANGUAGES_ICON = '<path d="M5 7h9M9 7v10M7 17h5"/><path d="M14 20l4-10 4 10M15.4 17h5.2"/>'
+// The mark of the panel's head and of the title bar's menu entry: the
+// design canvas's own (Sprachen.dc.html), a stroke on a 24 grid as the title
+// bar's marks. A path's data, as JobChooser's JOBS_ICON.
+export const LANGUAGES_ICON = 'M5 7h9M9 7v10M7 17h5M14 20l4-10 4 10M15.4 17h5.2'
 
 export function iconOf(paths: string, size = 16): SVGSVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
