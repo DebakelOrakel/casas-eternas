@@ -155,7 +155,8 @@ impl Spelling {
     /// its neighbours where the style says so (`context`); two equal
     /// consonants are written by the style's `geminate`: "double" writes
     /// the first letter of the second's letters for the first (tt, ssh),
-    /// "single" writes the second only.
+    /// "single" writes the second only. No letter stands three times in a
+    /// row.
     pub fn spell(&self, kit: &Kit, word: &[Phoneme]) -> String {
         let st = &kit.spelling.styles[self.style];
         let mut out = String::new();
@@ -169,7 +170,22 @@ impl Spelling {
             }
             out.push_str(&self.spell_one(kit, word, i));
         }
-        out
+        // No letter three times in a row (TEG-146): a geminate of a sound
+        // written with a doubled letter ("rr" + "rr"), or a tap before a
+        // trill ("r" + "rr"), wrote "rrr".
+        let mut text = String::with_capacity(out.len());
+        let mut run = (None, 0);
+        for c in out.chars() {
+            run = if run.0 == Some(c) {
+                (Some(c), run.1 + 1)
+            } else {
+                (Some(c), 1)
+            };
+            if run.1 <= 2 {
+                text.push(c);
+            }
+        }
+        text
     }
 
     // The letters of the sound at i, by its neighbours.

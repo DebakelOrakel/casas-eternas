@@ -411,6 +411,35 @@ pub fn apply_change(change: &Change, word: &Word) -> Word {
     }
 }
 
+/// The fewest sounds of a word, the glottal stop not counted (TEG-146):
+/// a root has them, and a sound change does not make a word shorter
+/// (`wear_word`). On 300 seeds before this rule, 2.2 % of the
+/// proto-languages' words were one sound ("marsh = a"), and more of their
+/// daughters' ("bay = 'o": the glottal stop is a mark in most spellings).
+pub const WORD_LEAST_SOUNDS: usize = 2;
+
+/// True when a word may stand as a word: WORD_LEAST_SOUNDS sounds or more
+/// that are not the glottal stop, and a vowel.
+pub fn holds(sounds: &[Phoneme]) -> bool {
+    sounds.iter().filter(|p| p.id() != "ʔ").count() >= WORD_LEAST_SOUNDS
+        && sounds.iter().any(|p| p.sound().vowel)
+}
+
+/// A word through one sound change, where the result still holds
+/// (`holds`); else the word as it was. Every word of a line (its lexicon,
+/// its names, a new word) wears by this rule, so they wear alike.
+pub fn wear_word(change: &Change, word: &Word) -> Word {
+    if !change.may_change(&word.sounds) {
+        return word.clone();
+    }
+    let next = apply_change(change, word);
+    if holds(&next.sounds) {
+        next
+    } else {
+        word.clone()
+    }
+}
+
 fn first_match(
     change: &Change,
     kit: &Kit,

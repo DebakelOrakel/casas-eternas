@@ -208,3 +208,12 @@ where it has the words, else a name of its own. Kept as entries after the
 names (some 40 to 130 KB a world on the v15 worlds); the window shows a
 name's older names and its exonyms. Names the user sets (fork 4) have a
 place in the format, not built. Loans of ordinary words are not built.
+2026-10-31: the names tuned (TEG-146): a word has two sounds or more
+besides the glottal stop and no two like syllables side by side; a
+consonant repeats less in a root; a name has 5 syllables at most, a word
+4 syllables and 10 sounds (drawn again, else the shortest of the draws);
+the 48 core meanings take a new word at 0.7 % a century (some 93 % kept a
+millennium), the others at 1.5 %; four sound changes a millennium, not
+two; the link sounds follow the sound changes, and a name's own word and
+a new word go through the line's changes, so a name has only its
+language's sounds when given; no letter three times in a row.

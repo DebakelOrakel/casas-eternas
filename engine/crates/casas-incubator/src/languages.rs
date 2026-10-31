@@ -51,8 +51,8 @@
 
 use crate::language::Draw;
 use crate::language::{
-    Change, Kind, Language, NameRecipe, Phoneme, Slot, Word, apply_change, changes, ipa, kit,
-    seed_of,
+    Kind, Language, NameRecipe, Phoneme, Slot, Word, apply_change, changes, core_meanings, holds,
+    ipa, kit, seed_of, wear_word,
 };
 use crate::log::LogEvent;
 use crate::peoples::Tree;
@@ -81,21 +81,37 @@ pub const LANGUAGE_APART_YEARS: f64 = 1500.0;
 pub const LANGUAGE_SHARE: f64 = 0.01;
 /// The step of the dated changes, years.
 pub const CENTURY_YEARS: f64 = 100.0;
-/// The chance of a sound change in a century, thousandths: two a
+/// The chance of a sound change in a century, thousandths: four a
 /// millennium. A rate, not an earth measure: Latin to Spanish took some
 /// 30 regular changes in 2 000 years (Index Diachronica's list, from
-/// memory); the kit has 91 templates, and two a millennium keep the
-/// daughters of one family alike for some thousands of years.
-pub const SOUND_CHANGE_CHANCE: u32 = 200;
-/// The chance that a meaning of the lexicon takes a new word in a century,
-/// thousandths: 1 − 0.86^0.1. Glottochronology's anchor: some 86 % of the
-/// Swadesh list of 100 meanings kept a millennium (Swadesh 1955; Lees
-/// 1953 gave 81 % for the list of 200; from memory, not checked against
-/// the papers). The kit's meanings are a place's (water, river, hill,
+/// memory); the kit has 91 templates, each a large change. TEG-146: with
+/// two a millennium (200) a core word two sisters both inherited was the
+/// proto-language's still in 63 % of the pairs after 2 000 years apart
+/// and in 33 % after 6 000, beside a lexicon that took new words faster;
+/// with four, 43 % and 17 % (200 seeds), and the sisters' forms of such a
+/// word differ in 67 % and 79 % of the pairs: related at a glance after
+/// 2 000 years, by their changes after 6 000.
+pub const SOUND_CHANGE_CHANCE: u32 = 400;
+/// The chance that a meaning of the lexicon that is not core takes a new
+/// word in a century, thousandths: 1 − 0.86^0.1. Glottochronology's
+/// anchor: some 86 % of the Swadesh list of 100 meanings kept a
+/// millennium (Swadesh 1955; Lees 1953 gave 81 % for the list of 200;
+/// from memory, not checked against the papers). The kit's meanings are a place's (water, river, hill,
 /// red …), near the Swadesh list's.
 pub const WORD_LOSS_CHANCE: u32 = 15;
+/// The same for a core meaning (meanings.json `core`, the 48 that every
+/// lexicon has), thousandths: 1 − 0.93^0.1 (TEG-146). The core of the
+/// Swadesh and the Leipzig–Jakarta lists keeps some 90 to 95 % a
+/// millennium, its most stable part more (Swadesh's 86 % is the mean of
+/// the whole list; Tadmor and Haspelmath's Leipzig–Jakarta list of 2009
+/// is the 100 most borrowing-resistant meanings; from memory, not checked
+/// against the papers). With the old rate for all, two sister languages
+/// shared 54 % of the core words inherited after 2 000 years apart and
+/// 16 % after 6 000 (200 seeds), and the languages window compared mostly
+/// new words; with this rate 75 % and 42 %.
+pub const CORE_WORD_LOSS_CHANCE: u32 = 7;
 /// The tries to draw a sound change that changes CHANGE_LEAST_WORDS words
-/// or more of the lexicon and leaves each a vowel.
+/// or more of the lexicon and leaves each a word (`language::holds`).
 pub const CHANGE_TRIES: usize = 12;
 pub const CHANGE_LEAST_WORDS: usize = 2;
 /// A dialect's sound changes on top of its language: as many as drawn
@@ -234,20 +250,19 @@ pub struct Packed {
     pub description: String,
 }
 
-/// A language as it is at a year: the language, every sound change of its
-/// line in order (for the words that come later), and the node's own
-/// changes with the first word each changed.
+/// A language as it is at a year: the language (with every sound change
+/// of its line in order, `Language::line`, for the words that come
+/// later), and the node's own changes with the first word each changed.
 #[derive(Clone)]
 pub struct Speech {
     pub lang: Language,
-    pub applied: Vec<Change>,
     pub own: Vec<(Dated, Option<(Word, Word)>)>,
 }
 
 /// What became of a word of a node's lexicon (`Languages::lexicon_history`,
 /// TEG-141): the year its line took a new word for the meaning (None: the
 /// family's proto-language's word, inherited), and the sound changes that
-/// changed it since, by their index in the line (`Speech::applied`, the
+/// changed it since, by their index in the line (`Language::line`, the
 /// order of place_names.rs `line_changes`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WordHistory {
@@ -686,7 +701,6 @@ impl Languages {
             Level::Family => {
                 let sp = Speech {
                     lang: cache.proto(node.seed).clone(),
-                    applied: Vec::new(),
                     own: Vec::new(),
                 };
                 if let Some(h) = history.as_deref_mut() {
@@ -705,20 +719,12 @@ impl Languages {
         sp.own.clear();
         let all = changes();
         let meanings = &kit().meanings.meanings;
-        let proto = if node.words.is_empty() {
-            None
-        } else {
-            Some(cache.proto(self.nodes[self.family_of(k)].seed).clone())
-        };
         // A new word put; true where the meaning has one now.
         let put = |sp: &mut Speech, x: &NewWord| -> bool {
             let m = &meanings[x.meaning].id;
-            if let Some(word) = new_word(proto.as_ref().unwrap(), node.seed, m, x.year, &sp.applied)
-            {
-                sp.lang.set_word(m, word);
-                return true;
-            }
-            false
+            let word = new_word(&sp.lang, node.seed, m, x.year);
+            sp.lang.set_word(m, word);
+            sp.lang.root(m).is_some()
         };
         let word_put =
             |sp: &mut Speech, x: &NewWord, history: &mut Option<&mut Vec<WordHistory>>| {
@@ -754,16 +760,15 @@ impl Languages {
                             .map(|(_, w)| w.sounds.clone())
                             .collect()
                     });
+                    let index = sp.lang.line.len();
                     let first = sp.lang.sound_change(&change);
                     if let (Some(h), Some(before)) = (history.as_deref_mut(), before) {
-                        let index = sp.applied.len();
                         for (i, (_, w)) in sp.lang.lexicon().iter().enumerate() {
                             if w.sounds != before[i] {
                                 h[i].changes.push(index);
                             }
                         }
                     }
-                    sp.applied.push(change);
                     sp.own.push((d.clone(), first));
                     c += 1;
                 }
@@ -806,10 +811,7 @@ impl Languages {
             .enumerate()
         {
             let c = changes()[d.change].with_choice(d.choice);
-            if !c.may_change(&w.sounds) {
-                continue;
-            }
-            let next = apply_change(&c, &w);
+            let next = wear_word(&c, &w);
             if next.sounds != w.sounds {
                 hit.push(i);
                 w = next;
@@ -850,14 +852,17 @@ impl Languages {
         let mut sp = match node.level {
             Level::Family => Speech {
                 lang: cache.proto(node.seed).clone(),
-                applied: Vec::new(),
                 own: Vec::new(),
             },
             _ => self.speech(node.parent as usize, node.from, cache),
         };
-        let proto = cache.proto(self.nodes[self.family_of(k)].seed).clone();
         let mut d = Draw::new(node.seed, "years");
-        let meanings: Vec<String> = sp.lang.meanings().map(str::to_string).collect();
+        let core = core_meanings();
+        let meanings: Vec<(String, bool)> = sp
+            .lang
+            .meanings()
+            .map(|m| (m.to_string(), core.contains(&m)))
+            .collect();
         let index: HashMap<&str, usize> = kit()
             .meanings
             .meanings
@@ -872,20 +877,22 @@ impl Languages {
             {
                 let c = changes()[change].with_choice(choice);
                 sp.lang.sound_change(&c);
-                sp.applied.push(c);
                 self.nodes[k].changes.push(Dated {
                     year,
                     change,
                     choice,
                 });
             }
-            for m in &meanings {
-                if !d.chance(WORD_LOSS_CHANCE) {
+            for (m, core) in &meanings {
+                let loss = if *core {
+                    CORE_WORD_LOSS_CHANCE
+                } else {
+                    WORD_LOSS_CHANCE
+                };
+                if !d.chance(loss) {
                     continue;
                 }
-                let Some(word) = new_word(&proto, node.seed, m, year, &sp.applied) else {
-                    continue;
-                };
+                let word = new_word(&sp.lang, node.seed, m, year);
                 sp.lang.set_word(m, word);
                 self.nodes[k].words.push(NewWord {
                     year,
@@ -1032,7 +1039,7 @@ impl Cache {
 }
 
 // A sound change that fits the language's sounds and changes
-// CHANGE_LEAST_WORDS words or more, leaving each a vowel: its template's
+// CHANGE_LEAST_WORDS words or more, leaving each a word: its template's
 // index and its choice; None after CHANGE_TRIES.
 fn pick_change(lang: &Language, d: &mut Draw) -> Option<(usize, usize)> {
     let all = changes();
@@ -1071,7 +1078,7 @@ fn pick_change(lang: &Language, d: &mut Draw) -> Option<(usize, usize)> {
             let next = apply_change(&c, w);
             if next.sounds != w.sounds {
                 changed += 1;
-                if !next.sounds.iter().any(vowel) {
+                if !holds(&next.sounds) {
                     ok = false;
                     break;
                 }
@@ -1084,31 +1091,12 @@ fn pick_change(lang: &Language, d: &mut Draw) -> Option<(usize, usize)> {
     None
 }
 
-// A node's new word for a meaning at a year: a root of the family's
-// proto-language drawn from the node's seed, the meaning and the year,
-// through every sound change of the line before it (`applied`); None
-// where they leave it no vowel.
-fn new_word(
-    proto: &Language,
-    seed: u32,
-    meaning: &str,
-    year: f64,
-    applied: &[Change],
-) -> Option<Word> {
-    let mut d = Draw::new(seed, &format!("word:{meaning}:{year}"));
-    let sounds = proto.syllables.root(kit(), &mut d, None);
-    let syllables = sounds.iter().filter(|p| vowel(p)).count();
-    let free = d.below(syllables as u32) as usize;
-    let mut word = Word {
-        stress: proto.stressed(&sounds, free),
-        sounds,
-    };
-    for c in applied {
-        if c.may_change(&word.sounds) {
-            word = apply_change(c, &word);
-        }
-    }
-    word.sounds.iter().any(vowel).then_some(word)
+// A node's new word for a meaning at a year: a root its language makes
+// then (`Language::new_root`: of the family's proto-language's syllables,
+// through every sound change of the line before it), drawn from the
+// node's seed, the meaning and the year.
+fn new_word(lang: &Language, seed: u32, meaning: &str, year: f64) -> Word {
+    lang.new_root(&mut Draw::new(seed, &format!("word:{meaning}:{year}")))
 }
 
 // The name of a people (salt: its id + 1) or of a family (0) in the
@@ -1138,14 +1126,10 @@ fn form_in(recipe: &NameRecipe, sp: &Speech) -> String {
                 sounds: sounds.clone(),
                 stress: None,
             };
-            for c in &sp.applied {
-                if c.may_change(&w.sounds) {
-                    w = apply_change(c, &w);
-                }
+            for c in &sp.lang.line {
+                w = wear_word(c, &w);
             }
-            if w.sounds.iter().any(vowel) {
-                *sounds = w.sounds;
-            }
+            *sounds = w.sounds;
         }
     }
     r.form(&sp.lang)
@@ -1422,8 +1406,8 @@ mod tests {
                 format!("{:?}", speech.lang.lexicon())
             );
             let line = line_changes(&tree, k, f64::NEG_INFINITY, node.until);
-            assert_eq!(line.len(), sp.applied.len());
-            for (d, c) in line.iter().zip(&sp.applied) {
+            assert_eq!(line.len(), sp.lang.line.len());
+            for (d, c) in line.iter().zip(&sp.lang.line) {
                 assert_eq!(
                     format!("{:?}", changes()[d.change].with_choice(d.choice)),
                     format!("{c:?}")

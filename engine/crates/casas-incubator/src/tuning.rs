@@ -94,7 +94,15 @@ use serde_json::{Map, Value, json};
 /// other names (name_contact.rs, TEG-142, TEG-143, 2026-10-31): the old
 /// names where another people took a place (kept as a loan or renamed)
 /// and the exonyms between the peoples in contact at the end, packed
-/// after the names (the other arrays and the log the same bytes).
+/// after the names (the other arrays and the log the same bytes); the
+/// made names tuned (TEG-146, 2026-10-31): roots of two sounds or more
+/// with no like syllables side by side and fewer repeated consonants, a
+/// name's syllables and sounds capped, the core meanings take new words
+/// at half the rate of the others, sound changes twice as often, the link
+/// sounds follow the sound changes, a name's own word and a new word go
+/// through the line's changes, no letter three times in a row; the
+/// languages', the names' and the other names' arrays other, the other
+/// arrays and the log the same bytes.
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
@@ -184,11 +192,12 @@ pub fn constants() -> Value {
         )),
         "language": object(table!(language:
             LEXICON_SHARE, HOMOPHONE_TRIES, IMPLICATION_ROUNDS, WORD_LENGTH_SHIFT, WORD_LENGTH_SHORT, WORD_LENGTH_LONG,
-            JOINER_ALWAYS, PEOPLE_PREFIX, ENDING_TRIES, FIT_STEPS,
+            JOINER_ALWAYS, PEOPLE_PREFIX, ENDING_TRIES, FIT_STEPS, WORD_LEAST_SOUNDS, REPEAT_DAMP,
+            NAME_SYLLABLES_MOST, WORD_SYLLABLES_MOST, WORD_SOUNDS_MOST, NAME_TRIES_LENGTH,
         )),
         "languages": object(table!(languages:
-            LANGUAGE_APART_YEARS, LANGUAGE_SHARE, CENTURY_YEARS, SOUND_CHANGE_CHANCE, WORD_LOSS_CHANCE, CHANGE_TRIES,
-            CHANGE_LEAST_WORDS, DIALECT_CHANGES_LEAST, DIALECT_CHANGES_MOST,
+            LANGUAGE_APART_YEARS, LANGUAGE_SHARE, CENTURY_YEARS, SOUND_CHANGE_CHANCE, WORD_LOSS_CHANCE,
+            CORE_WORD_LOSS_CHANCE, CHANGE_TRIES, CHANGE_LEAST_WORDS, DIALECT_CHANGES_LEAST, DIALECT_CHANGES_MOST,
         )),
         "names": object(table!(place_names:
             RIVER_LEAST_CELLS, LAKE_LEAST_CELLS, MOUNTAIN_LEAST_M, MOUNTAIN_LEAST_CELLS, MOUNTAINS_A_LANDMASS,

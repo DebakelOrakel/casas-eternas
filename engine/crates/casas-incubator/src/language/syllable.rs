@@ -3,6 +3,7 @@
 //! roots it makes, and the test that a word can be split into them.
 
 use super::Phoneme;
+use super::change::holds;
 use super::draw::Draw;
 use super::kit::{Kit, Sound, weight};
 use std::collections::BTreeSet;
@@ -16,6 +17,36 @@ pub const WORD_LENGTH_SHIFT: u32 = 150;
 /// rest is the kit's weights unchanged.
 pub const WORD_LENGTH_SHORT: u32 = 250;
 pub const WORD_LENGTH_LONG: u32 = 250;
+
+/// A consonant that stands in a root already is drawn again for an onset
+/// or a coda of that root with its weight divided by this (TEG-146: a
+/// language of few consonants repeated its commonest ones, "Pimpapim",
+/// "mumom"; 18.4 % of the roots on 300 seeds had a consonant twice, with
+/// this 12.8 %).
+pub const REPEAT_DAMP: u64 = 3;
+
+/// True when a word has two like syllables side by side: the same
+/// consonant before the same vowel twice in a row ("Qamqamdle",
+/// "Papa"). The names and the roots (`Phonotactics::root`) avoid them.
+pub fn echoes(word: &[Phoneme]) -> bool {
+    // By vowel, the consonant just before it (None at a vowel after a
+    // vowel or at the start).
+    let mut last: Option<(Option<Phoneme>, Phoneme)> = None;
+    for (i, &p) in word.iter().enumerate() {
+        if !p.sound().vowel {
+            continue;
+        }
+        let before = i
+            .checked_sub(1)
+            .map(|j| word[j])
+            .filter(|q| !q.sound().vowel);
+        if before.is_some() && last == Some((before, p)) {
+            return true;
+        }
+        last = Some((before, p));
+    }
+    false
+}
 
 /// One syllable form of a language, with every onset and coda it allows.
 #[derive(Debug, Clone)]
@@ -403,17 +434,22 @@ impl Phonotactics {
     }
 
     /// A root of the language: its syllables drawn by the forms' weights,
-    /// and its length by `root_length` (or `syllables` when given).
+    /// and its length by `root_length` (or `syllables` when given). It
+    /// holds as a word (`change::holds`: two sounds or more, TEG-146), a
+    /// root of one syllable begins with a consonant ("marsh = a" before),
+    /// and it has no two like syllables side by side (`echoes`).
     pub fn root(&self, kit: &Kit, d: &mut Draw, syllables: Option<usize>) -> Vec<Phoneme> {
         let n =
             syllables.unwrap_or_else(|| 1 + d.pick(&self.root_length.map(u64::from)).unwrap_or(1));
         for _ in 0..64 {
             let mut word: Vec<Phoneme> = Vec::new();
             for _ in 0..n {
-                let syl = self.syllable(kit, d, word.is_empty(), word.last().copied());
+                let syl = self.syllable(kit, d, &word);
                 word.extend(syl);
             }
-            if self.pronounceable(kit, &word) {
+            let onset = word.first().is_some_and(|&p| !self.vowel(kit, p));
+            if self.pronounceable(kit, &word) && holds(&word) && (n > 1 || onset) && !echoes(&word)
+            {
                 return word;
             }
         }
@@ -428,18 +464,22 @@ impl Phonotactics {
         word
     }
 
-    fn syllable(
-        &self,
-        kit: &Kit,
-        d: &mut Draw,
-        first: bool,
-        before: Option<Phoneme>,
-    ) -> Vec<Phoneme> {
-        let after_vowel = before.is_some_and(|p| self.vowel(kit, p));
+    // A syllable after `word` (the root so far).
+    fn syllable(&self, kit: &Kit, d: &mut Draw, word: &[Phoneme]) -> Vec<Phoneme> {
+        let first = word.is_empty();
+        let after_vowel = word.last().is_some_and(|&p| self.vowel(kit, p));
+        // A consonant the root has already weighs less (REPEAT_DAMP).
+        let damped = |part: &[Phoneme], w: u64| {
+            if part.iter().any(|p| word.contains(p)) {
+                (w / REPEAT_DAMP).max(1)
+            } else {
+                w
+            }
+        };
         for _ in 0..32 {
             let k = d.pick_by(&self.forms, |f| u64::from(f.weight)).unwrap();
             let f = &self.forms[k];
-            let o = d.pick_by(&f.onsets, |o| o.1).unwrap();
+            let o = d.pick_by(&f.onsets, |o| damped(&o.0, o.1)).unwrap();
             let onset = &f.onsets[o].0;
             if onset.is_empty() && after_vowel && self.rules.no_vowel_hiatus {
                 continue;
@@ -472,7 +512,7 @@ impl Phonotactics {
                 }
                 syl.push(glides[d.below(glides.len() as u32) as usize]);
             }
-            let c = d.pick_by(&f.codas, |c| c.1).unwrap();
+            let c = d.pick_by(&f.codas, |c| damped(&c.0, c.1)).unwrap();
             syl.extend_from_slice(&f.codas[c].0);
             return syl;
         }

@@ -55,7 +55,7 @@
 //! (`line_changes`), then spelt in the namer's spelling of that year. So
 //! a compound wears down as a whole, and a new word for one of its
 //! meanings does not change it (Eoforwic → York). A change that leaves a
-//! word no vowel leaves the word as it was.
+//! word too short (`language::holds`) leaves the word as it was.
 //!
 //! THE OTHER NAMES (since TEG-142 and TEG-143, `Aliases`; given in
 //! name_contact.rs): a place's later names, where another people took it
@@ -67,7 +67,7 @@
 
 use crate::habitat::Habitat;
 use crate::language::{
-    Kind, NameRecipe, Phoneme, Slot, Word, apply_change, capitalise, changes, kit, mix,
+    Kind, NameRecipe, Phoneme, Slot, Word, capitalise, changes, kit, mix, wear_word,
 };
 use crate::languages::{Cache, Dated, Languages, Level};
 use crate::name_contact::{Contact, give_aliases};
@@ -1149,23 +1149,15 @@ pub fn names_of_places_json(
 }
 
 /// The words through one dated change: each word the change leaves a
-/// vowel.
+/// word (`language::wear_word`).
 pub(crate) fn wear(words: &mut [Vec<Phoneme>], d: &Dated) {
     let change = changes()[d.change].with_choice(d.choice);
     for w in words.iter_mut() {
-        if !change.may_change(w) {
-            continue;
-        }
-        let next = apply_change(
-            &change,
-            &Word {
-                sounds: w.clone(),
-                stress: None,
-            },
-        );
-        if next.sounds.iter().any(|p| p.sound().vowel) {
-            *w = next.sounds;
-        }
+        let word = Word {
+            sounds: std::mem::take(w),
+            stress: None,
+        };
+        *w = wear_word(&change, &word).sounds;
     }
 }
 

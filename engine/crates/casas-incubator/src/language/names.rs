@@ -10,7 +10,7 @@ use super::draw::{Draw, mix};
 use super::inventory::Inventory;
 use super::kit::{Kit, kit, weight};
 use super::spelling::capitalise;
-use super::syllable::Phonotactics;
+use super::syllable::{Phonotactics, echoes};
 use super::{Language, Phoneme};
 
 /// The chance that a language with a vowel joiner puts it in every
@@ -21,6 +21,19 @@ pub const JOINER_ALWAYS: u32 = 500;
 /// The chance that the ending of the people is a prefix (the note of
 /// "endings": "a prefix is allowed with weight 0.15"), in thousandths.
 pub const PEOPLE_PREFIX: u32 = 150;
+
+/// A name's syllables at most, over its words, and a word's (TEG-146: on
+/// 300 seeds' proto-languages before the caps, 4.7 % of the names had 6
+/// syllables or more, "Qmembajtlabjo", "Kemqemkamtomtja"; most of the
+/// earth's place names have 2 to 4). A name over the caps is drawn again
+/// (`Language::name`), NAME_TRIES_LENGTH times at most.
+pub const NAME_SYLLABLES_MOST: usize = 5;
+pub const WORD_SYLLABLES_MOST: usize = 4;
+/// And a word's sounds at most: the clusters make a word of four
+/// syllables long too ("Tlabjodjabem", 12 sounds; 5 % of the names' words
+/// had more than 10 before the cap).
+pub const WORD_SOUNDS_MOST: usize = 10;
+pub const NAME_TRIES_LENGTH: u32 = 8;
 
 /// The tries to draw an ending that the syllable rules allow.
 pub const ENDING_TRIES: usize = 20;
@@ -140,27 +153,12 @@ impl Grammar {
             _ => Joiner::None,
         };
         let sound = |p: Phoneme| &kit.sounds[p.0 as usize];
-        let short: Vec<Phoneme> = inv
-            .vowels
-            .iter()
-            .copied()
-            .filter(|&v| !sound(v).long && !sound(v).nasal)
-            .collect();
+        let short = Grammar::link_vowels(inv);
         let by_weight = |d: &mut Draw, list: &[Phoneme]| {
             list[d.pick_by(list, |&p| u64::from(sound(p).weight)).unwrap()]
         };
         let link_vowel = by_weight(d, &short);
-        let onsets: Vec<Phoneme> = inv
-            .consonants
-            .iter()
-            .copied()
-            .filter(|&c| !sound(c).glide() && sound(c).id != "ŋ")
-            .collect();
-        let onsets = if onsets.is_empty() {
-            inv.consonants.clone()
-        } else {
-            onsets
-        };
+        let onsets = Grammar::link_consonants(inv);
         let link_consonant = by_weight(d, &onsets);
         let codas: Vec<Phoneme> = inv
             .consonants
@@ -235,6 +233,32 @@ impl Grammar {
             }));
         }
         grammar
+    }
+
+    /// The sounds of an inventory a link vowel may be: the short oral
+    /// vowels.
+    pub fn link_vowels(inv: &Inventory) -> Vec<Phoneme> {
+        inv.vowels
+            .iter()
+            .copied()
+            .filter(|&v| !v.sound().long && !v.sound().nasal)
+            .collect()
+    }
+
+    /// The sounds of an inventory a link consonant may be: not a glide,
+    /// not ŋ; all its consonants where none is left.
+    pub fn link_consonants(inv: &Inventory) -> Vec<Phoneme> {
+        let onsets: Vec<Phoneme> = inv
+            .consonants
+            .iter()
+            .copied()
+            .filter(|&c| !c.sound().glide() && c.id() != "ŋ")
+            .collect();
+        if onsets.is_empty() {
+            inv.consonants.clone()
+        } else {
+            onsets
+        }
     }
 
     /// The ending of a kind, if the language has one.
@@ -408,9 +432,46 @@ impl Language {
     /// tells two places apart: the same kind, meanings and salt give the
     /// same recipe. The patterns with `X` (the name of a near place) need
     /// that place and are not drawn here.
+    ///
+    /// TEG-146: a name of more than NAME_SYLLABLES_MOST syllables, with a
+    /// word of more than WORD_SYLLABLES_MOST syllables or WORD_SOUNDS_MOST
+    /// sounds, or with two like syllables side by side in a word
+    /// (`echoes`), is drawn again, NAME_TRIES_LENGTH tries in all; where
+    /// none keeps the caps, the one least over them stands (0.3 % of the
+    /// names on 300 seeds).
     pub fn name(&self, kind: Kind, meanings: &[&str], salt: u32) -> NameRecipe {
-        let kit = kit();
         let mut d = Draw::new(mix(self.seed ^ mix(salt)), &format!("name:{}", kind.id()));
+        let mut best: Option<((usize, usize), NameRecipe)> = None;
+        for _ in 0..NAME_TRIES_LENGTH {
+            let recipe = self.draw_name(kind, meanings, &mut d);
+            let words = recipe.words(self);
+            let syllables = |w: &[Phoneme]| w.iter().filter(|p| p.sound().vowel).count();
+            let total: usize = words.iter().map(|w| syllables(w)).sum();
+            let longest = words.iter().map(|w| syllables(w)).max().unwrap_or(0);
+            let sounds = words.iter().map(Vec::len).max().unwrap_or(0);
+            let echo = words.iter().any(|w| echoes(w));
+            if total <= NAME_SYLLABLES_MOST
+                && longest <= WORD_SYLLABLES_MOST
+                && sounds <= WORD_SOUNDS_MOST
+                && !echo
+            {
+                return recipe;
+            }
+            // The least over the caps, then the one without an echo.
+            let over = (total.saturating_sub(NAME_SYLLABLES_MOST))
+                + longest.saturating_sub(WORD_SYLLABLES_MOST)
+                + sounds.saturating_sub(WORD_SOUNDS_MOST);
+            let score = (over, usize::from(echo));
+            if best.as_ref().is_none_or(|(b, _)| score < *b) {
+                best = Some((score, recipe));
+            }
+        }
+        best.expect("NAME_TRIES_LENGTH is not 0").1
+    }
+
+    // One draw of `name`.
+    fn draw_name(&self, kind: Kind, meanings: &[&str], d: &mut Draw) -> NameRecipe {
+        let kit = kit();
         let patterns = &kit.patterns.patterns[kind.id()];
         let lexicon: Vec<&super::kit::Meaning> = kit
             .meanings
@@ -469,7 +530,7 @@ impl Language {
                     .iter()
                     .find(|p| p.form == "W")
                     .map_or_else(|| patterns[0].id.clone(), |p| p.id.clone()),
-                slots: vec![Slot::Own(self.own_word(&mut d))],
+                slots: vec![Slot::Own(self.own_word(d))],
             };
         };
         let p = &patterns[k];
@@ -500,7 +561,7 @@ impl Language {
                         _ => Slot::Noun(m.to_string()),
                     }
                 }
-                'W' => Slot::Own(self.own_word(&mut d)),
+                'W' => Slot::Own(self.own_word(d)),
                 _ => Slot::Ending,
             };
             slots.push(slot);
@@ -512,8 +573,10 @@ impl Language {
         }
     }
 
-    // A word of its own: a root in the language's sounds.
+    // A word of its own: a root the language makes now (`new_root`: in
+    // its sounds, through its line's changes; TEG-146, before a root of
+    // its proto-language's sounds).
     fn own_word(&self, d: &mut Draw) -> Vec<Phoneme> {
-        self.syllables.root(kit(), d, None)
+        self.new_root(d).sounds
     }
 }

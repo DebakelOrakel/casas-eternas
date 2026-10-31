@@ -45,29 +45,32 @@ fn the_same_seed_gives_the_same_language() {
 }
 
 // The bits of a fixed seed. A change here is a change of the languages:
-// check that it is meant, then write the new lines.
+// check that it is meant, then write the new lines. Written again for
+// TEG-146 (2026-10-31): the roots of two sounds or more with no like
+// syllables side by side and fewer repeated consonants, the names' caps,
+// the own words through the line (the same here: a proto-language).
 #[test]
 fn a_fixed_seed_gives_its_golden_lines() {
     let golden: &[&str] = &[
         "pbtdkgʔfsʃxɣhmnŋɾrwieoəɛaĩã",
-        "water=mewehi",
+        "water=menerri",
         "river=mi",
-        "spring=teperre",
-        "lake=rrinda",
+        "spring=tebewe",
+        "lake=rrinpa",
         "marsh=rro",
-        "sea=wiga",
-        "ford=shadan",
-        "snow=raboho",
-        "land=wekhan",
-        "mountain=datanho",
-        "Imipa Eni",
-        "Kewome Dikha",
-        "Sa Dikha",
-        "Ginrran Pokhanfa",
-        "E Eni",
+        "sea=wigha",
+        "ford=sha'an",
+        "snow=ra'opo",
+        "land=werran",
+        "mountain=dashanngo",
+        "Imiga Eni",
+        "Ketowe Dika",
+        "Sa Dika",
+        "Ginkan Porranwa",
+        "He Rro",
         "Ngeme",
-        "Teperre 'Angipa",
-        "'A",
+        "Fa",
+        "Sa",
     ];
     let got = lines(20_261_031);
     if got != golden {
@@ -203,6 +206,92 @@ fn every_root_and_name_is_pronounceable() {
                         "seed {seed}: {kind:?} {} ({form}, {})",
                         ipa(&w),
                         recipe.pattern
+                    );
+                }
+            }
+        }
+    }
+}
+
+// TEG-146: every root holds as a word (two sounds or more besides the
+// glottal stop, a vowel), a root of one syllable begins with a consonant,
+// no root has two like syllables side by side; the names keep their caps
+// but for a few (the shortest of NAME_TRIES_LENGTH draws stands), and no
+// letter stands three times in a row.
+#[test]
+fn every_root_holds_and_the_names_keep_their_caps() {
+    let (mut names, mut over) = (0, 0);
+    for seed in SEEDS {
+        let lang = Language::proto(seed);
+        for (m, w) in lang.lexicon() {
+            let s = &w.sounds;
+            assert!(holds(s), "seed {seed}: {m} = {}", ipa(s));
+            assert!(!echoes(s), "seed {seed}: {m} = {}", ipa(s));
+            if s.iter().filter(|p| p.sound().vowel).count() == 1 {
+                assert!(!s[0].sound().vowel, "seed {seed}: {m} = {}", ipa(s));
+            }
+        }
+        for kind in Kind::ALL {
+            for salt in 0..10 {
+                let r = lang.name(kind, &[], salt);
+                let words = r.words(&lang);
+                let syl = |w: &Vec<Phoneme>| w.iter().filter(|p| p.sound().vowel).count();
+                names += 1;
+                if words.iter().map(syl).sum::<usize>() > NAME_SYLLABLES_MOST
+                    || words
+                        .iter()
+                        .any(|w| syl(w) > WORD_SYLLABLES_MOST || w.len() > WORD_SOUNDS_MOST)
+                {
+                    over += 1;
+                }
+                let form: Vec<char> = r.form(&lang).to_lowercase().chars().collect();
+                assert!(
+                    !form.windows(3).any(|t| t[0] == t[1] && t[1] == t[2]),
+                    "seed {seed}: {}",
+                    r.form(&lang)
+                );
+            }
+        }
+    }
+    // 0.3 % on the 300 seeds (2026-10-31).
+    assert!(over * 100 < names, "{over} of {names} names over the caps");
+}
+
+// TEG-146: after sound changes the link vowel and the link consonant, and
+// every sound of a name drawn in the language (its joins, its own word),
+// are of the language's inventory.
+#[test]
+fn the_links_and_the_names_follow_the_changes() {
+    let all = changes();
+    for seed in 0..60u32 {
+        let mut lang = Language::proto(seed);
+        let mut d = Draw::new(seed, "test-changes");
+        for _ in 0..30 {
+            let sounds = lang.inventory.sounds();
+            let weights: Vec<u64> = all
+                .iter()
+                .map(|c| u64::from(c.fits(&sounds)) * u64::from(c.weight))
+                .collect();
+            let Some(k) = d.pick(&weights) else { break };
+            let c = all[k].with_choice(d.below(all[k].choices() as u32) as usize);
+            lang.sound_change(&c);
+        }
+        let inventory = lang.inventory.sounds();
+        assert!(inventory.contains(&lang.grammar.link_vowel), "seed {seed}");
+        assert!(
+            inventory.contains(&lang.grammar.link_consonant),
+            "seed {seed}"
+        );
+        for (m, w) in lang.lexicon() {
+            assert!(holds(&w.sounds), "seed {seed}: {m} = {}", ipa(&w.sounds));
+        }
+        for kind in Kind::ALL {
+            for salt in 0..10 {
+                for w in lang.name(kind, &[], salt).words(&lang) {
+                    assert!(
+                        w.iter().all(|p| inventory.contains(p)),
+                        "seed {seed}: {kind:?} {}",
+                        ipa(&w)
                     );
                 }
             }

@@ -37,17 +37,19 @@ mod syllable;
 #[cfg(test)]
 mod tests;
 
-pub use change::{Change, apply_change, change, changes};
+pub use change::{Change, WORD_LEAST_SOUNDS, apply_change, change, changes, holds, wear_word};
 pub use draw::{Draw, mix, seed_of};
 pub use inventory::{IMPLICATION_ROUNDS, Inventory, Stress};
 pub use kit::{Kit, Sound, kit, weight};
 pub use loan::{FIT_STEPS, distance, nearest};
 pub use names::{
-    Compounding, ENDING_TRIES, Ending, Grammar, JOINER_ALWAYS, Joiner, Kind, NameRecipe,
-    PEOPLE_PREFIX, Slot,
+    Compounding, ENDING_TRIES, Ending, Grammar, JOINER_ALWAYS, Joiner, Kind, NAME_SYLLABLES_MOST,
+    NAME_TRIES_LENGTH, NameRecipe, PEOPLE_PREFIX, Slot, WORD_SOUNDS_MOST, WORD_SYLLABLES_MOST,
 };
 pub use spelling::{Spelling, capitalise};
-pub use syllable::{Phonotactics, WORD_LENGTH_LONG, WORD_LENGTH_SHIFT, WORD_LENGTH_SHORT};
+pub use syllable::{
+    Phonotactics, REPEAT_DAMP, WORD_LENGTH_LONG, WORD_LENGTH_SHIFT, WORD_LENGTH_SHORT, echoes,
+};
 
 use serde_json::{Value, json};
 
@@ -97,6 +99,10 @@ pub struct Language {
     pub grammar: Grammar,
     /// The roots by meaning, in the order of meanings.json.
     lexicon: Vec<(String, Word)>,
+    /// The sound changes made on it since its proto-language, in order
+    /// (`sound_change`): its line. A word it makes later (`new_root`)
+    /// goes through them.
+    pub line: Vec<Change>,
 }
 
 impl Language {
@@ -125,6 +131,7 @@ impl Language {
             spelling,
             grammar,
             lexicon: Vec::new(),
+            line: Vec::new(),
         };
         for m in &kit.meanings.meanings {
             if !m.core && !Draw::new(seed, &format!("lexicon:{}", m.id)).chance(LEXICON_SHARE) {
@@ -200,25 +207,30 @@ impl Language {
     }
 
     /// A sound change on the whole language (TEG-138): every word of the
-    /// lexicon, the endings and the joiner. A change that leaves an ending
-    /// or the joiner without sounds leaves it as it was. The inventory
-    /// follows the lexicon: a sound its words had and have no more goes, a
+    /// lexicon, the endings and the joiner (`wear_word`: a change that
+    /// leaves a word too short leaves it as it was; one that leaves an
+    /// ending or the joiner without sounds, too). The inventory follows:
+    /// a sound its words, endings and joiner had and have no more goes, a
     /// sound they have and it had not comes; the spelling gives the new
-    /// inventory its letters (`Spelling::new`). The first word of the
-    /// lexicon the change changed, before and after; None when it changed
-    /// none.
+    /// inventory its letters (`Spelling::new`). The link vowel and the
+    /// link consonant follow the change where it leaves them one sound of
+    /// their kind, and take their nearest sound of the inventory where
+    /// they are not in it (TEG-146: before, they kept their proto-sound,
+    /// and the compounds a sound the language had lost). The change goes
+    /// on the language's line. The first word of the lexicon the change
+    /// changed, before and after; None when it changed none.
     pub fn sound_change(&mut self, change: &Change) -> Option<(Word, Word)> {
         let kit = kit();
         let mut had = [false; 256];
         let mut has = [false; 256];
         let mut first = None;
+        let bare = |sounds: &[Phoneme]| Word {
+            sounds: sounds.to_vec(),
+            stress: None,
+        };
         for (_, w) in &mut self.lexicon {
             w.sounds.iter().for_each(|p| had[p.0 as usize] = true);
-            if !change.may_change(&w.sounds) {
-                w.sounds.iter().for_each(|p| has[p.0 as usize] = true);
-                continue;
-            }
-            let next = apply_change(change, w);
+            let next = wear_word(change, w);
             next.sounds.iter().for_each(|p| has[p.0 as usize] = true);
             if next.sounds != w.sounds {
                 if first.is_none() {
@@ -227,21 +239,23 @@ impl Language {
                 *w = next;
             }
         }
-        let bare = |sounds: &[Phoneme]| Word {
-            sounds: sounds.to_vec(),
-            stress: None,
-        };
-        for e in self.grammar.endings.iter_mut().flatten() {
-            let next = apply_change(change, &bare(&e.sounds));
-            if !next.sounds.is_empty() {
-                e.sounds = next.sounds;
+        let g = &mut self.grammar;
+        let parts = g
+            .endings
+            .iter_mut()
+            .flatten()
+            .map(|e| &mut e.sounds)
+            .chain(std::iter::once(&mut g.joiner_sounds));
+        for sounds in parts {
+            if sounds.is_empty() {
+                continue;
             }
-        }
-        if !self.grammar.joiner_sounds.is_empty() {
-            let next = apply_change(change, &bare(&self.grammar.joiner_sounds));
+            sounds.iter().for_each(|p| had[p.0 as usize] = true);
+            let next = apply_change(change, &bare(sounds));
             if !next.sounds.is_empty() {
-                self.grammar.joiner_sounds = next.sounds;
+                *sounds = next.sounds;
             }
+            sounds.iter().for_each(|p| has[p.0 as usize] = true);
         }
         let gone = |p: &Phoneme| had[p.0 as usize] && !has[p.0 as usize];
         self.inventory.consonants.retain(|p| !gone(p));
@@ -262,8 +276,40 @@ impl Language {
             let at = list.partition_point(|q| q.0 < p.0);
             list.insert(at, p);
         }
+        let g = &mut self.grammar;
+        g.link_vowel = follow(change, g.link_vowel, &Grammar::link_vowels(&self.inventory));
+        g.link_consonant = follow(
+            change,
+            g.link_consonant,
+            &Grammar::link_consonants(&self.inventory),
+        );
         self.spelling = Spelling::new(kit, self.spelling.style, &self.inventory.sounds());
+        self.line.push(change.clone());
         first
+    }
+
+    /// A word the language makes now (a new word of its lexicon, a name's
+    /// word of its own): a root of its proto-language's syllables, through
+    /// the sound changes of its line (`wear_word`), each sound that is not
+    /// of the inventory then its nearest of it (`loan::nearest`; a change
+    /// that left a sound in a few words only). Draws the root and its
+    /// stress from `d`.
+    pub fn new_root(&self, d: &mut Draw) -> Word {
+        let sounds = self.syllables.root(kit(), d, None);
+        let syllables = sounds.iter().filter(|p| p.sound().vowel).count();
+        let free = d.below(syllables as u32) as usize;
+        let mut word = Word {
+            stress: self.stressed(&sounds, free),
+            sounds,
+        };
+        for c in &self.line {
+            word = wear_word(c, &word);
+        }
+        let inventory = self.inventory.sounds();
+        for p in &mut word.sounds {
+            *p = nearest(*p, &inventory).unwrap_or(*p);
+        }
+        word
     }
 
     /// The language in another style of spelling (spelling.json, by its
@@ -271,6 +317,24 @@ impl Language {
     pub fn respell(&mut self, style: usize) {
         self.spelling = Spelling::new(kit(), style, &self.inventory.sounds());
     }
+}
+
+// A link sound through a change: what it became where that is one sound
+// of the list (`allowed`), else itself; then its nearest of the list where
+// the list does not have it.
+fn follow(change: &Change, link: Phoneme, allowed: &[Phoneme]) -> Phoneme {
+    let next = apply_change(
+        change,
+        &Word {
+            sounds: vec![link],
+            stress: None,
+        },
+    );
+    let p = match next.sounds.as_slice() {
+        [q] if allowed.contains(q) => *q,
+        _ => link,
+    };
+    nearest(p, allowed).unwrap_or(p)
 }
 
 /// The meanings of the kit that are in every lexicon.
