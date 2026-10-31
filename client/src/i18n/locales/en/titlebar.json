@@ -41,6 +41,7 @@
   "titlebar.jobs.label": "Jobs",
   "titlebar.jobs.help": "The fine simulation of your worlds on the server: what waits, runs, is done.",
   "titlebar.languages.label": "Languages",
+  "titlebar.languages.help": "The languages of the peoples, as a tree and a map, in the full window.",
   "titlebar.menu.label": "Menu",
   "titlebar.menu.help": "Jobs, artifacts, language and account.",
   "titlebar.handbook.label": "Handbook",

@@ -41,6 +41,7 @@
   "titlebar.jobs.label": "Jobs",
   "titlebar.jobs.help": "Die Feinsimulation deiner Welten auf dem Server: was wartet, läuft, fertig ist.",
   "titlebar.languages.label": "Sprachen",
+  "titlebar.languages.help": "Die Sprachen der Völker als Baum und Karte, im ganzen Fenster.",
   "titlebar.menu.label": "Menü",
   "titlebar.menu.help": "Jobs, Artefakte, Sprache und Konto.",
   "titlebar.handbook.label": "Handbuch",
