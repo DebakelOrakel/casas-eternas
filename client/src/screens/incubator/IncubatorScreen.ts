@@ -31,6 +31,9 @@ import { ARTIFACTS_ICON, createArtifactChooser, reportCommission } from '../../u
 import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
 import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
 import { createLayerPanel } from '../../ui/layerPanel/LayerPanel'
+import { createLanguagePanel } from '../../ui/languagePanel/LanguagePanel'
+import type { LanguageView } from '../../ui/languagePanel/languageTypes'
+import { createWindowSet } from '../../ui/windows/windowSet'
 import type { LayerState } from '../../ui/layerPanel/layerTypes'
 import { ANIMAL_USES, OVERLAY_GROUPS, OVERLAY_PANEL_TEXTS, PLANT_USES, favouritesToTurnOn, WOOD_USES, animalLayerId, isNoneLayer, overlayGroupOf, plantLayerId, resourceLayerId, woodLayerId, type AnimalUse, type OverlayGroupId, type PlantUse, type WoodUse } from '../../map/overlayGroups'
 import { CURRENT_GAP, CURRENT_LENGTH, currentPictures, currentSymbols, hotspotSymbols, nameSymbols, volcanoSymbols, WIND_GAP, WIND_LENGTH, windPictures, windSymbols, type ChartSize, type VolcanoMark } from '../generator/mapSymbols'
@@ -67,6 +70,7 @@ import type { ChartPoint } from '../../map/worldView'
 import type { IncubatorAnswer, IncubatorRequest, PeoplesWithoutIds, PeoplingControls } from './incubatorWorker'
 import { NO_PEOPLE } from './historyPack'
 import { createChroniclePanel, type ChronicleEvent } from './chroniclePanel'
+import { deriveLanguageView, peopleCentre, stubLanguageEngine } from './languageView'
 import { cellInputOf, CHART_HEIGHT, CHART_WIDTH, rainOf, type HistoryRain } from './historyInput'
 import { createLegendPanel } from '../../ui/legend/LegendPanel'
 import { createProgressPill } from '../../ui/progressPill/ProgressPill'
@@ -272,8 +276,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The same entries on every screen, the world list included.
     menuItems: [
       { key: 'titlebar.handbook', icon: BOOK_ICON, onSelect: () => handbookPanel.open() },
-      { key: 'titlebar.jobs', icon: JOBS_ICON, onSelect: () => openWindow(jobChooser) },
-      { key: 'common.action.storage', icon: ARTIFACTS_ICON, onSelect: () => openWindow(artifactChooser) },
+      { key: 'titlebar.jobs', icon: JOBS_ICON, onSelect: () => windows.open(jobChooser) },
+      { key: 'common.action.storage', icon: ARTIFACTS_ICON, onSelect: () => windows.open(artifactChooser) },
     ],
     onLocaleChange: () => {
       sidebar.relabel()
@@ -288,6 +292,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       updateSteps()
       overlayList.relabel()
       chronicle.relabel()
+      languagePanel.relabel()
       sayChronicle()
       // The crossings' years are pictures: made again in the new language.
       crossingWays = null
@@ -307,6 +312,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     span: SPAN_YEARS,
     onTime: (time) => {
       peopleTime = time
+      languagePanel.setTime(time)
       if (people) showPlants()
       sayCounts()
     },
@@ -315,6 +321,44 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (at) view?.lookAt(at)
     },
   })
+
+  // THE LANGUAGES (ui/languagePanel, TEG-140, DES-0033), read only: a
+  // column beside the chronicle, shown by its switch (showPanels), and a
+  // full view, a window as the artifacts and the jobs (`windows`). Its view
+  // is the history's peoples through the stub engine (languageView.ts;
+  // showLanguages), or the fixture (`?languages=fixture`, below).
+  const languagePanel = createLanguagePanel(root, {
+    // The map's colouring of the peoples selected comes with the languages
+    // of the world (a later step of TEG-135 ff.).
+    onSelect: () => {},
+    onShowOnMap: (target) => {
+      if (!overlay) return
+      const tree = peoples?.tree
+      const node = 'language' in target ? languageView?.nodes.find((n) => n.id === target.language) : undefined
+      const cell = 'cell' in target ? target.cell : tree && node && !languageFixture ? peopleCentre(tree, node.peoples, frameIndex()) : -1
+      if (cell >= 0) view?.lookAt(cellPoint(cell, overlay.u, overlay.v))
+    },
+    onLayout: (layout) => (layout === 'full' ? windows.open(languagePanel) : windows.close(languagePanel)),
+  })
+  // The time as the chronicle starts (peopleTime, below).
+  languagePanel.setTime(SPAN_YEARS)
+  let languageView: LanguageView | null = null
+  // The tree and the log the view was made from, to make it again only
+  // when one of them changes.
+  let languagesFrom: { tree: unknown; log: unknown } = { tree: null, log: null }
+  // True while the fixture is shown: the history's languages are not.
+  let languageFixture = false
+  // Called with the chronicle (sayChronicle): the history's peoples and its
+  // log come with the history and its settlement.
+  function showLanguages(): void {
+    if (languageFixture) return
+    const tree = peoples?.tree ?? null
+    const log = settled?.log ?? null
+    if (languagesFrom.tree === tree && languagesFrom.log === log) return
+    languagesFrom = { tree, log }
+    languageView = tree && log && historyTime ? deriveLanguageView({ tree, log, start: historyTime.start, end: historyTime.end }, stubLanguageEngine) : null
+    languagePanel.setView(languageView)
+  }
 
   // THE STEPS. They compute and say what they did; the layers are the
   // panel's, the same in every step (map/overlayGroups.ts).
@@ -608,11 +652,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // shown and hidden by its switch in the title bar (ui/titleBar/
   // PanelToggles), while the furniture shows.
   let furnitureShown = false
-  const panelToggles = createPanelToggles(titleBar.panels, 'incubator', ['actions', 'overlays', 'chronicle'], () => showPanels())
+  const panelToggles = createPanelToggles(titleBar.panels, 'incubator', ['actions', 'overlays', 'chronicle', 'languages'], () => showPanels())
   function showPanels(): void {
     sidebar.setVisible(furnitureShown && panelToggles.shown('actions'))
     overlayList.setVisible(furnitureShown && panelToggles.shown('overlays'))
     chronicle.setVisible(furnitureShown && panelToggles.shown('chronicle'))
+    languagePanel.setVisible(furnitureShown && panelToggles.shown('languages'))
   }
   // Every layer off: by "All off", and before the favourites come on.
   const layersOff = (): void => {
@@ -1192,6 +1237,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       }
     }
     chronicle.setEvents(events)
+    showLanguages()
     // The curve over the range: the old stone age's part alone in its step.
     const curve = curveNow()
     chronicle.setCurve(curve && onOldStoneAge() && stone ? curve.slice(0, Math.floor(stone.span / POPULATION_STEP) + 1) : curve)
@@ -2511,20 +2557,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // and closing one leaves the list as it was.
   // `level`: the pipeline of the level 1 shown, which its histories run on.
   let held: { uid: string; name: string; seed: string; worldId: string | null; level?: string } | null = null
-  const closeWindow = (window: { isOpen(): boolean; close(): void }): void => {
-    if (!window.isOpen()) return
-    window.close()
-    // Over the world list, the list stays and the column stays away.
-    if (!worldChooser.isOpen()) setFurniture(true)
-  }
   const artifactChooser = createArtifactChooser(root, {
     currentWorld: () => held,
-    onClose: () => closeWindow(artifactChooser),
+    onClose: () => windows.close(artifactChooser),
     onCommissioned: (outcome) => reportCommission(ctx.notifications, outcome),
   })
   const jobChooser = createJobChooser(root, {
     currentWorld: () => held,
-    onClose: () => closeWindow(jobChooser),
+    onClose: () => windows.close(jobChooser),
   })
   // The handbook, as in the generator. No step and no layers here, so it
   // opens on its overview.
@@ -2532,14 +2572,18 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     docsAvailable: () => peekServerStatus()?.modules.includes('docs') ?? false,
     current: () => null,
   })
-  function openWindow(window: typeof artifactChooser | typeof jobChooser): void {
-    if (window.isOpen()) return
-    handbookPanel.close()
-    const other = window === artifactChooser ? jobChooser : artifactChooser
-    if (other.isOpen()) closeWindow(other)
-    setFurniture(false)
-    window.open()
-  }
+  // One window at a time (ui/windows/windowSet.ts), the languages' full
+  // view the third. Over the world list, the list stays and the column
+  // stays away.
+  const windows = createWindowSet([artifactChooser, jobChooser, languagePanel], {
+    beforeOpen: () => {
+      handbookPanel.close()
+      setFurniture(false)
+    },
+    afterClose: () => {
+      if (!worldChooser.isOpen()) setFurniture(true)
+    },
+  })
 
   // The step on screen: its actions; the panel's rows, the map and its
   // legend redrawn. The layers are the same in every step.
@@ -2577,6 +2621,19 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     })()
   }
 
+  // DEBUG: `?screen=incubator&languages=fixture` shows the languages
+  // fixture (scripts/fixtures/languages.json) in the languages panel instead
+  // of the history's, opened in its full view. Not a user surface.
+  if (new URLSearchParams(window.location.search).get('languages') === 'fixture') {
+    languageFixture = true
+    void import('../../../scripts/fixtures/fixtureView').then((m) => m.loadFixtureView()).then((fixture) => {
+      if (disposed) return
+      languageView = fixture
+      languagePanel.setView(fixture)
+      windows.open(languagePanel)
+    })
+  }
+
   ctx.overlay.appendChild(root)
 
   const helpTooltip = createHelpTooltip(root)
@@ -2601,6 +2658,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       progressPill.dispose()
       incubator.dispose()
       chronicle.dispose()
+      languagePanel.dispose()
       ctx.canvas.removeEventListener('pointerdown', onPress)
       ctx.canvas.removeEventListener('pointerup', onRelease)
       hoverTooltip.dispose()

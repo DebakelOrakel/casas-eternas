@@ -10,6 +10,7 @@
     "harness:roundtrip": "node scripts/roundtrip.mjs",
     "test:http-store": "node scripts/httpStore.mjs",
     "harness:pipeline": "node scripts/pipeline.mjs",
+    "harness:languages": "node scripts/languageView.mjs",
     "build:worker": "node scripts/buildWorker.mjs",
     "build:docs": "npx esbuild scripts/docsite.ts --bundle --packages=external --platform=node --format=esm --target=node20 --outfile=scripts/.docsite.mjs --log-level=warning && node scripts/.docsite.mjs"
   },

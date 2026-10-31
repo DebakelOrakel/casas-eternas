@@ -1,7 +1,7 @@
 .notification-container {
   position: fixed;
   top: 5.25rem;
-  right: calc(1.5rem + var(--right-sidebar-width, 0px));
+  right: calc(1.5rem + var(--right-sidebar-width, 0px) + var(--right-panel-width, 0px));
   width: 320px;
   max-width: calc(100vw - 3rem);
   display: flex;

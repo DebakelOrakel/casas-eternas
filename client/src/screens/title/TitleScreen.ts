@@ -7,6 +7,7 @@ import { createTitleBar } from '../../ui/titleBar/TitleBar'
 import { ARTIFACTS_ICON, createArtifactChooser, reportCommission } from '../../ui/artifactChooser/ArtifactChooser'
 import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
 import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
+import { createWindowSet } from '../../ui/windows/windowSet'
 import { peekServerStatus } from '../../server/serverStatus'
 import '../../ui/theme/design.css'
 import './title.css'
@@ -74,12 +75,8 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
     docsAvailable: () => peekServerStatus()?.modules.includes('docs') ?? false,
     current: () => null,
   })
-  const openWindow = (window: typeof artifactChooser | typeof jobChooser): void => {
-    if (window.isOpen()) return
-    handbookPanel.close()
-    ;(window === artifactChooser ? jobChooser : artifactChooser).close()
-    window.open()
-  }
+  // One window at a time (ui/windows/windowSet.ts); no furniture here.
+  const windows = createWindowSet([artifactChooser, jobChooser], { beforeOpen: () => handbookPanel.close() })
 
   const titleBar = createTitleBar(root, {
     onSignIn: () => serverIndicator.openSignIn(),
@@ -90,8 +87,8 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
     // The same entries as on the other screens.
     menuItems: [
       { key: 'titlebar.handbook', icon: BOOK_ICON, onSelect: () => handbookPanel.open() },
-      { key: 'titlebar.jobs', icon: JOBS_ICON, onSelect: () => openWindow(jobChooser) },
-      { key: 'common.action.storage', icon: ARTIFACTS_ICON, onSelect: () => openWindow(artifactChooser) },
+      { key: 'titlebar.jobs', icon: JOBS_ICON, onSelect: () => windows.open(jobChooser) },
+      { key: 'common.action.storage', icon: ARTIFACTS_ICON, onSelect: () => windows.open(artifactChooser) },
     ],
     onLocaleChange: () => ctx.goTo('title'),
   })

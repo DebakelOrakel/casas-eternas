@@ -3,7 +3,7 @@
    paper, pointer-transparent. */
 .scale-bar {
   position: fixed;
-  right: calc(1rem + var(--right-sidebar-width, 0px));
+  right: calc(1rem + var(--right-sidebar-width, 0px) + var(--right-panel-width, 0px));
   bottom: calc(1rem + var(--step-bar-height, 0px));
   z-index: 2;
   display: flex;

@@ -1,4 +1,5 @@
-/* The panels' widths (the left column, the layer panel, the chronicle),
+/* The panels' widths (the left column, the layer panel, the chronicle, the
+   languages panel beside it),
    published on the document element by each panel. Registered, so a change
    slides: the canvas and the map's furniture follow the width, and each
    panel, of a fixed width, moves in from its side by the same amount. */
@@ -20,8 +21,14 @@
   initial-value: 0px;
 }
 
+@property --right-panel-width {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
 :root {
-  transition: --sidebar-width 0.22s ease, --left-panel-width 0.22s ease, --right-sidebar-width 0.22s ease;
+  transition: --sidebar-width 0.22s ease, --left-panel-width 0.22s ease, --right-sidebar-width 0.22s ease, --right-panel-width 0.22s ease;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -48,7 +55,7 @@ html, body {
      takes the right side the same way, its layer panel a second column on
      the left. The `0px` fallbacks are every other
      screen, unchanged. */
-  width: calc(100% - var(--sidebar-width, 0px) - var(--left-panel-width, 0px) - var(--right-sidebar-width, 0px));
+  width: calc(100% - var(--sidebar-width, 0px) - var(--left-panel-width, 0px) - var(--right-sidebar-width, 0px) - var(--right-panel-width, 0px));
   margin-left: calc(var(--sidebar-width, 0px) + var(--left-panel-width, 0px));
   height: 100vh; /* fallback for browsers without dvh */
   height: 100dvh; /* match the *visible* viewport on mobile (browser chrome), like #overlay */

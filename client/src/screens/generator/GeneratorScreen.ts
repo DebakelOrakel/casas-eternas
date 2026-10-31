@@ -92,6 +92,7 @@ import { openWorld } from '../../world/query'
 import { createStepBar } from './StepBar'
 import { createSidebar } from '../../ui/sidebar/Sidebar'
 import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
+import { createWindowSet } from '../../ui/windows/windowSet'
 import { createMonthPlayer } from './monthPlayer'
 import { deriveWorldUid, newWorldUid } from '../../world/identity'
 import { ARCHEAN_INPUTS } from '../../generator/archean/archeanInputParams'
@@ -633,8 +634,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // so the menu has the same entries on every screen.
     menuItems: [
       { key: 'titlebar.handbook', icon: BOOK_ICON, onSelect: () => handbookPanel.open() },
-      { key: 'titlebar.jobs', icon: JOBS_ICON, onSelect: () => openJobs() },
-      { key: 'common.action.storage', icon: ARTIFACTS_ICON, onSelect: () => openArtifacts() },
+      { key: 'titlebar.jobs', icon: JOBS_ICON, onSelect: () => windows.open(jobChooser) },
+      { key: 'common.action.storage', icon: ARTIFACTS_ICON, onSelect: () => windows.open(artifactChooser) },
     ],
     onLocaleChange: () => {
       // One call for the whole column: every step block in it carries its keys
@@ -679,12 +680,25 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // world gets one on its first save; artifacts are filed under it).
   const artifactChooser = createArtifactChooser(root, {
     currentWorld: () => (worldUid ? { uid: worldUid, name: worldName, seed: seedInput.value, worldId: savedWorldId } : null),
-    onClose: () => closeArtifacts(),
+    onClose: () => windows.close(artifactChooser),
     onCommissioned: (outcome) => reportCommission(outcome),
   })
   const jobChooser = createJobChooser(root, {
     currentWorld: () => (worldUid ? { uid: worldUid } : null),
-    onClose: () => closeJobs(),
+    onClose: () => windows.close(jobChooser),
+  })
+  // The artifact window and the jobs window step the generator's furniture
+  // aside as the world list does; one of the two at a time
+  // (ui/windows/windowSet.ts). Over the world list, the list stays and the
+  // furniture stays away.
+  const windows = createWindowSet([artifactChooser, jobChooser], {
+    beforeOpen: () => {
+      handbookPanel.close()
+      setFurniture(false)
+    },
+    afterClose: () => {
+      if (!chooserOpen) setFurniture(true)
+    },
   })
   const tempBandInput = root.querySelector<HTMLInputElement>('.temp-band-input')!
   const tempBandLabel = root.querySelector<HTMLElement>('[data-value="temp-band-label"]')!
@@ -4353,31 +4367,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     worldChooser.open()
   }
 
-  // The artifact window steps the generator's furniture aside as the world
-  // list does.
-  function openArtifacts(): void {
-    if (artifactChooser.isOpen()) return
-    handbookPanel.close()
-    closeJobs()
-    setFurniture(false)
-    artifactChooser.open()
-  }
-  // The jobs window, the same way; one of the two at a time.
-  function openJobs(): void {
-    if (jobChooser.isOpen()) return
-    handbookPanel.close()
-    closeArtifacts()
-    setFurniture(false)
-    jobChooser.open()
-  }
-  function closeJobs(): void {
-    if (!jobChooser.isOpen()) return
-    jobChooser.close()
-    // Over the world list, the list stays and the furniture stays away.
-    if (chooserOpen) return
-    setFurniture(true)
-  }
-
   // THE FINISHING STEP: the world held refined on the server, as one plan —
   // level 1, then every tile of it with land at level 2 (the coordinator,
   // docs/decisions/detail-ladder.md). Its state is the newest plan for this
@@ -4550,13 +4539,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       return refreshFinishing()
     })
   })
-
-  function closeArtifacts(): void {
-    if (!artifactChooser.isOpen()) return
-    artifactChooser.close()
-    if (chooserOpen) return
-    setFurniture(true)
-  }
 
   function closeWorldChooser(): void {
     if (!chooserOpen) return

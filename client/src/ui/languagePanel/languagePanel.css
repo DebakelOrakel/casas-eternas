@@ -1,0 +1,836 @@
+/* The languages panel (LanguagePanel.ts), light, after the design canvas
+   (Sprachen.dc.html, Sprachen-Voll.dc.html). One DOM, two layouts: narrow,
+   a column beside the chronicle with the layer panel's look; full, a window
+   over the work area as the artifacts and the jobs (worldChooser.css). */
+.language-panel {
+  position: fixed;
+  top: var(--title-bar-height, 0px);
+  bottom: var(--step-bar-height, 0px);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: var(--dc-panel);
+  color: var(--dc-text);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  outline: none;
+}
+
+.language-panel button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.language-panel button:focus-visible,
+.language-panel__input:focus-visible {
+  outline: 2px solid var(--dc-accent);
+  outline-offset: 1px;
+}
+
+/* NARROW: left of the chronicle, of its own width, moved out to the right
+   under the chronicle by what it does not take. */
+.language-panel--narrow {
+  right: calc(var(--right-sidebar-width, 0px) + var(--right-panel-width, 0px) - 360px);
+  width: 360px;
+  z-index: 2;
+  border-left: 1px solid var(--dc-line);
+}
+
+/* FULL: over the work area, below the title bar, as a window. */
+.language-panel--full {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  background: var(--dc-bg);
+}
+
+.language-panel--narrow .language-panel__full-only,
+.language-panel--full .language-panel__narrow-only {
+  display: none !important;
+}
+
+/* --- head ------------------------------------------------------------------ */
+
+.language-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  flex-shrink: 0;
+  padding: 0 14px 0 18px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--dc-line);
+  background: var(--dc-panel);
+}
+
+.language-panel__mark {
+  display: flex;
+  color: var(--dc-accent);
+}
+
+.language-panel__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dc-strong);
+}
+
+.language-panel__summary,
+.language-panel__when,
+.language-tree__counts,
+.language-tree__value,
+.language-overview__year,
+.language-overview__figure-value,
+.language-overview__mono,
+.language-overview__rule {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+.language-panel__summary {
+  flex-grow: 1;
+  font-size: 11.5px;
+  color: var(--dc-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.language-panel__action {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--dc-line2);
+  border-radius: 2px;
+  background: transparent;
+  font-size: 12px;
+  color: var(--dc-text2);
+}
+
+.language-panel__action:hover,
+.language-panel__tab:hover,
+.language-panel__segment:hover,
+.language-tree__main:hover,
+.language-tree__more:hover,
+.language-overview__daughter:hover,
+.language-world__name:hover {
+  background: var(--dc-hover);
+}
+
+.language-panel__when {
+  flex-shrink: 0;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--dc-line);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dc-accent);
+  background: var(--dc-panel);
+}
+
+.language-panel__tabs {
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--dc-line);
+}
+
+.language-panel__tab {
+  flex-grow: 1;
+  height: 30px;
+  border: 1px solid var(--dc-line);
+  border-radius: 2px;
+  background: transparent;
+  font-size: 12px;
+  color: var(--dc-muted);
+}
+
+.language-panel__tab[aria-selected='true'] {
+  background: var(--dc-hover);
+  color: var(--dc-strong);
+  font-weight: 600;
+}
+
+.language-panel__empty {
+  display: none;
+  margin: 0;
+  padding: 18px;
+  font-size: 13px;
+  color: var(--dc-muted);
+}
+
+.language-panel--empty .language-panel__empty {
+  display: block;
+}
+
+.language-panel--empty .language-panel__columns,
+.language-panel--empty .language-panel__tabs,
+.language-panel--empty .language-panel__when {
+  display: none;
+}
+
+/* --- columns --------------------------------------------------------------- */
+
+.language-panel__columns {
+  flex-grow: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.language-panel__column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Narrow: the tree tab shows the tree; the language tab the overview and
+   the world side, one scroll. */
+.language-panel--narrow.language-panel--tab-tree .language-panel__column--main,
+.language-panel--narrow.language-panel--tab-tree .language-panel__column--world,
+.language-panel--narrow.language-panel--tab-language .language-panel__column--tree {
+  display: none;
+}
+
+.language-panel--narrow .language-panel__column--tree {
+  flex-grow: 1;
+}
+
+.language-panel--narrow.language-panel--tab-language .language-panel__columns {
+  overflow-y: auto;
+  display: block;
+}
+
+.language-panel--narrow .language-panel__column--world {
+  padding: 0 18px 18px;
+}
+
+/* Full: three columns, each its own scroll. */
+.language-panel--full .language-panel__columns {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr) 340px;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.language-panel--full .language-panel__column--tree {
+  border-right: 1px solid var(--dc-line);
+  background: var(--dc-panel);
+}
+
+.language-panel--full .language-panel__column--main {
+  overflow-y: auto;
+}
+
+.language-panel--full .language-panel__column--world {
+  overflow-y: auto;
+  padding: 18px;
+  border-left: 1px solid var(--dc-line);
+  background: var(--dc-panel);
+}
+
+/* --- search and filters ---------------------------------------------------- */
+
+.language-panel__search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 14px;
+  height: 32px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  border: 1px solid var(--dc-input-line);
+  border-radius: 2px;
+  background: var(--dc-menu-bg);
+  color: var(--dc-muted);
+}
+
+.language-panel__input {
+  flex-grow: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--dc-text);
+}
+
+.language-panel__input:focus-visible {
+  outline: none;
+}
+
+.language-panel__filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 0 14px 10px;
+  border-bottom: 1px solid var(--dc-line);
+}
+
+.language-panel__grow {
+  flex-grow: 1;
+}
+
+.language-panel__segments {
+  height: 26px;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--dc-line2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.language-panel__segment {
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  color: var(--dc-text2);
+}
+
+.language-panel__segment + .language-panel__segment {
+  border-left: 1px solid var(--dc-line2);
+}
+
+.language-panel__segment[aria-pressed='true'] {
+  background: var(--dc-accent);
+  color: var(--dc-on-accent);
+}
+
+.language-panel__switch-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  color: var(--dc-text2);
+}
+
+/* The layer panel's switch (layerPanel.css .layer-panel__switch). */
+.language-panel__switch {
+  position: relative;
+  width: 30px;
+  height: 17px;
+  border-radius: 2px;
+  background: var(--dc-line2);
+}
+
+.language-panel__switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--dc-panel);
+}
+
+.language-panel__switch-row--on .language-panel__switch {
+  background: var(--dc-accent);
+}
+
+.language-panel__switch-row--on .language-panel__switch::after {
+  left: 16px;
+  background: var(--dc-on-accent);
+}
+
+.language-panel__tree {
+  flex-grow: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 10px;
+}
+
+.language-panel__hint {
+  margin: 0;
+  padding: 10px 18px 14px;
+  font-size: 11.5px;
+  color: var(--dc-faint);
+}
+
+.language-panel__main-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--dc-line);
+}
+
+.language-panel__main-tab {
+  padding: 12px 4px 10px;
+  border-bottom: 2px solid var(--dc-accent);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dc-strong);
+}
+
+.language-panel--full .language-panel__overview {
+  padding: 22px 28px 32px;
+}
+
+.language-panel--narrow .language-panel__overview {
+  padding: 16px 18px 6px;
+}
+
+.language-panel__overview > .language-panel__hint {
+  padding: 0;
+}
+
+/* --- tree ------------------------------------------------------------------ */
+
+.language-tree__row {
+  display: flex;
+  align-items: stretch;
+}
+
+.language-tree__row--depth1 {
+  padding-left: 16px;
+}
+
+.language-tree__row--depth2 {
+  padding-left: 34px;
+}
+
+.language-tree__row--depth3 {
+  padding-left: 52px;
+}
+
+.language-tree__chevron {
+  width: 18px;
+  flex-shrink: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.language-tree__chevron::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--dc-muted);
+  transform: rotate(-90deg);
+  transition: transform 0.15s;
+}
+
+.language-tree__row[aria-expanded='true'] > .language-tree__chevron::before {
+  transform: none;
+}
+
+/* Hidden, it keeps its place: the names stand in one column. */
+.language-tree__chevron[hidden] {
+  display: flex;
+  visibility: hidden;
+}
+
+.language-tree__main {
+  flex-grow: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  text-align: left;
+  color: var(--dc-text2);
+}
+
+.language-tree__row--family .language-tree__main {
+  min-height: 36px;
+}
+
+.language-tree__row--selected .language-tree__main {
+  background: var(--dc-hover);
+  box-shadow: inset 2px 0 0 var(--dc-accent);
+}
+
+.language-tree__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.language-tree__swatch--0 { background: #d8912e; }
+.language-tree__swatch--1 { background: #2f8a7e; }
+.language-tree__swatch--2 { background: #7a5ea8; }
+.language-tree__swatch--3 { background: #b0392c; }
+.language-tree__swatch--4 { background: #4f78a8; }
+.language-tree__swatch--5 { background: #8a8a3a; }
+
+.language-tree__name {
+  flex-grow: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.language-tree__row--family .language-tree__name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--dc-strong);
+}
+
+.language-tree__row--selected .language-tree__name {
+  font-weight: 600;
+  color: var(--dc-strong);
+}
+
+.language-tree__row--extinct .language-tree__name,
+.language-tree__row--proto .language-tree__name {
+  color: var(--dc-faint);
+}
+
+.language-tree__counts,
+.language-tree__value {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--dc-muted);
+}
+
+.language-tree__value {
+  min-width: 52px;
+  text-align: right;
+  color: var(--dc-faint);
+}
+
+.language-tree__more {
+  flex-grow: 1;
+  min-height: 28px;
+  margin-left: 18px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  color: var(--dc-muted);
+}
+
+/* --- overview -------------------------------------------------------------- */
+
+.language-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.language-overview__crumbs {
+  font-size: 12px;
+  color: var(--dc-muted);
+}
+
+.language-overview__title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: -10px;
+}
+
+.language-overview__name {
+  margin: 0;
+  font-family: 'Bricolage Grotesque', Georgia, serif;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--dc-strong);
+}
+
+.language-panel--full .language-overview__name {
+  font-size: 34px;
+}
+
+.language-overview__tag,
+.language-overview__status {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--dc-muted);
+}
+
+.language-overview__status {
+  color: var(--dc-teal);
+}
+
+.language-overview__status--extinct {
+  color: var(--dc-red-text);
+}
+
+.language-overview__line {
+  margin: -8px 0 0;
+  font-size: 12.5px;
+  color: var(--dc-text2);
+}
+
+.language-overview__figures {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.language-overview__figure {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--dc-line);
+  border-radius: 8px;
+  background: var(--dc-panel);
+}
+
+.language-overview__figure-label {
+  font-size: 12px;
+  color: var(--dc-muted);
+}
+
+.language-overview__figure-value {
+  font-size: 20px;
+  color: var(--dc-text);
+}
+
+.language-overview__figure-hint {
+  min-height: 1.3em;
+  font-size: 11.5px;
+  color: var(--dc-faint);
+}
+
+.language-overview__section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.language-overview__heading,
+.language-world__heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--dc-text2);
+}
+
+.language-overview__aside {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--dc-muted);
+}
+
+.language-overview__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.language-overview__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.language-overview__chip {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--dc-line2);
+  border-radius: 2px;
+  font-size: 13px;
+  color: var(--dc-text);
+}
+
+.language-overview__chip--vowel {
+  background: var(--dc-hover);
+}
+
+.language-overview__chip--form {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--dc-text2);
+}
+
+.language-overview__trait {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) 90px;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.language-overview__trait-label {
+  color: var(--dc-text2);
+}
+
+.language-overview__trait-range {
+  color: var(--dc-faint);
+  font-size: 11px;
+  text-align: right;
+}
+
+.language-overview__bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--dc-line);
+  overflow: hidden;
+}
+
+.language-overview__bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--dc-accent);
+}
+
+.language-overview__text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dc-text2);
+}
+
+.language-overview__change {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 10px;
+  font-size: 12.5px;
+}
+
+.language-overview__year {
+  font-size: 11.5px;
+  color: var(--dc-muted);
+}
+
+.language-overview__change-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.language-overview__rule {
+  font-size: 12px;
+  color: var(--dc-strong);
+}
+
+.language-overview__example {
+  color: var(--dc-text2);
+}
+
+.language-overview__words {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 14px;
+  font-size: 13px;
+}
+
+.language-overview__word,
+.language-overview__sample-name {
+  font-weight: 600;
+  color: var(--dc-strong);
+}
+
+.language-overview__gloss {
+  color: var(--dc-muted);
+}
+
+.language-overview__heads {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.language-overview__samples {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 14px;
+  font-size: 13px;
+}
+
+.language-overview__sample {
+  display: flex;
+  flex-direction: column;
+}
+
+.language-overview__daughter,
+.language-world__name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+  color: var(--dc-text);
+}
+
+.language-overview__daughter-name,
+.language-world__name-text {
+  flex-grow: 1;
+}
+
+.language-overview__daughter-value,
+.language-world__name-kind {
+  font-size: 11.5px;
+  color: var(--dc-muted);
+}
+
+.language-overview__link,
+.language-world__link {
+  align-self: flex-start;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  font-size: 12.5px;
+  color: var(--dc-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* --- world side ------------------------------------------------------------ */
+
+.language-world {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.language-world__section,
+.language-world__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.language-world__people {
+  font-size: 13px;
+  color: var(--dc-text);
+}
+
+.language-world__foot {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--dc-muted);
+}

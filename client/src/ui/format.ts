@@ -87,3 +87,10 @@ export function initialsOf(name: string): string {
   if (parts.length === 1) return [...parts[0]].slice(0, 2).join('').toUpperCase()
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 }
+
+// A count, short, in the reader's locale: "820K", "2.1M" ("820.000",
+// "2,1 Mio." in German). For counts shown many times over in a list (the
+// speakers of a language), where the exact number is not the point.
+export function formatCount(count: number): string {
+  return new Intl.NumberFormat(getLocale(), { notation: 'compact', maximumFractionDigits: 1 }).format(count)
+}
