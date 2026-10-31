@@ -13,6 +13,7 @@ use casas_incubator::languages::{Languages, Packed, PeopleInput, tree_json};
 use casas_incubator::log::LogEvent;
 use casas_incubator::pack::{pack_history, pack_settled};
 use casas_incubator::peopling::{Controls, Peopling, people};
+use casas_incubator::place_names::{NameBook, Names, names_of_places_json};
 use casas_incubator::settle::settle_history;
 use casas_incubator::simulation::{SPAN_YEARS, STEP_YEARS, SimulationResult, ice_distance};
 use wasm_bindgen::prelude::*;
@@ -138,6 +139,142 @@ pub fn languages_of_peoples(
         })
         .collect();
     tree_json(&peoples, seed, start, end)
+}
+
+/// THE NAMES of places over a tree of peoples given as arrays (the
+/// arrays of `languagesOfPeoples`; then by place its kind, its namer and
+/// its year): the packed names, each at `end`, each over time, as JSON
+/// (casas_incubator::place_names `names_of_places_json`). For the
+/// languages harness, which makes its peoples and places itself.
+#[wasm_bindgen(js_name = namesOfPlaces)]
+#[allow(clippy::too_many_arguments)]
+pub fn names_of_places(
+    parent: &[i32],
+    group: &[i32],
+    born: &[f64],
+    ended: &[f64],
+    merged_into: &[i32],
+    big: &[u8],
+    share: &[f64],
+    replaced: &[u8],
+    heart: &[i32],
+    heart_apart: &[i32],
+    seed: f64,
+    start: f64,
+    end: f64,
+    kinds: &[u8],
+    people: &[i32],
+    years: &[f64],
+) -> String {
+    let peoples: Vec<PeopleInput> = (0..parent.len())
+        .map(|p| PeopleInput {
+            parent: parent[p],
+            group: group[p],
+            born: born[p],
+            ended: ended[p],
+            merged_into: merged_into[p],
+            big: big[p] != 0,
+            share: share[p],
+            replaced: replaced[p] != 0,
+            heart: heart[p],
+            heart_apart: heart_apart[p],
+        })
+        .collect();
+    names_of_places_json(&peoples, seed, start, end, kinds, people, years)
+}
+
+/// THE NAMES of a history (place_names.rs, TEG-139): its packed languages'
+/// tree (the arrays of `languageView`) and its packed names (pack.rs
+/// `name…`), read once; the names spelt at a year, or over time, a range
+/// of them at a time. The forms follow from the tree and the kit; the
+/// names are the world's content (no i18n).
+#[wasm_bindgen]
+pub struct PlaceNames {
+    book: NameBook,
+}
+
+#[wasm_bindgen]
+impl PlaceNames {
+    #[wasm_bindgen(constructor)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        people_language: &[i32],
+        parent: &[i32],
+        level: &[u8],
+        people: &[i32],
+        from: &[f32],
+        at: &[f32],
+        until: &[f32],
+        seed: &[i32],
+        style: &[u8],
+        change_start: &[i32],
+        change_year: &[u16],
+        change: &[u8],
+        change_choice: &[u8],
+        word_start: &[i32],
+        word_year: &[u16],
+        word_meaning: &[u8],
+        kind: &[u8],
+        place: &[i32],
+        cell: &[i32],
+        namer: &[u16],
+        year: &[f32],
+        pattern: &[u8],
+        meaning: &[u8],
+        own_length: &[u8],
+        own: &[u8],
+    ) -> Result<PlaceNames, JsError> {
+        let packed = Packed {
+            people_language: people_language.to_vec(),
+            parent: parent.to_vec(),
+            level: level.to_vec(),
+            people: people.to_vec(),
+            from: from.to_vec(),
+            at: at.to_vec(),
+            until: until.to_vec(),
+            seed: seed.to_vec(),
+            style: style.to_vec(),
+            change_start: change_start.to_vec(),
+            change_year: change_year.to_vec(),
+            change: change.to_vec(),
+            change_choice: change_choice.to_vec(),
+            word_start: word_start.to_vec(),
+            word_year: word_year.to_vec(),
+            word_meaning: word_meaning.to_vec(),
+            description: String::new(),
+        };
+        let tree = Languages::unpack(&packed).map_err(|e| JsError::new(&e))?;
+        let names = Names {
+            kind: kind.to_vec(),
+            place: place.to_vec(),
+            cell: cell.to_vec(),
+            namer: namer.to_vec(),
+            year: year.to_vec(),
+            pattern: pattern.to_vec(),
+            meaning: meaning.to_vec(),
+            own_length: own_length.to_vec(),
+            own: own.to_vec(),
+        };
+        let book = NameBook::new(tree, names).map_err(|e| JsError::new(&e))?;
+        Ok(PlaceNames { book })
+    }
+
+    /// How many names.
+    pub fn count(&self) -> usize {
+        self.book.names.len()
+    }
+
+    /// The names `from` .. `from + count` in `year`, JSON: a list of
+    /// strings, "" for a name not given by then.
+    pub fn at(&mut self, year: f64, from: usize, count: usize) -> String {
+        self.book.at_json(year, from, count)
+    }
+
+    /// The names `from` .. `from + count` over time, JSON: by name a list
+    /// [year, form, year, form …], the year from which each form holds.
+    pub fn forms(&mut self, from: usize, count: usize) -> String {
+        self.book.forms_json(from, count)
+    }
 }
 
 // Step 1's controls, each its default where not given.

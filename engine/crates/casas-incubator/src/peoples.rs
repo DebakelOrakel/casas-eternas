@@ -2195,6 +2195,8 @@ mod tests {
             width_km: 0.0,
             height_km: 0.0,
             volcanoes: Vec::new(),
+            lake: vec![0; n],
+            rivers: Vec::new(),
         }
     }
 

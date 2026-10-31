@@ -65,6 +65,24 @@
 //! - `languages` u8: JSON (UTF-8), by node a language's sounds at its
 //!   last year, a family's stress rule and syllable forms; null for a
 //!   dialect (`Languages::pack`).
+//!
+//! THE NAMES (since v6, 2026-10-31, TEG-139; place_names.rs), after the
+//! languages, which keep their bytes; by name, the villages first (one a
+//! village or camp of `villages` that had a namer, in their order), then
+//! the rivers, the mountains, the lakes, the landmasses: `nameKind` u8
+//! (language/names.rs `Kind`: 0 a village, 1 a river, 2 a mountain, 3 a
+//! lake, 4 a landmass), `namePlace` i32 (the village's index, the river's
+//! line in level 1's ribbons, the mountain's highest cell, the lake's
+//! first cell, the landmass's id), `nameCell` i32 (the village's cell,
+//! the river's mouth, the mountain's highest cell, the lake's first cell,
+//! the landmass's first people's first cell), `nameNamer` u16 (the node of
+//! the languages' tree it was given in), `nameYear` f32 (years),
+//! `namePattern` u8 (the pattern's index in patterns.json's list of its
+//! kind), `nameMeaning` u8 (two a name, the meanings of its slots H, A, N
+//! in the pattern's order, meanings.json's index; 255 for none),
+//! `nameOwnLength` u8 and `nameOwn` u8 (the sounds of its word of its own,
+//! `W`, the kit's table's index, one name's after the other's). The
+//! letters are not kept: they follow from the tree (`NameBook`).
 
 use crate::log::Json;
 use crate::simulation::SimulationResult;
@@ -257,6 +275,7 @@ pub fn pack_history(r: &SimulationResult) -> Vec<u8> {
         ("goodsShare".into(), Array::F32(&r.goods.share)),
     ]);
     push_languages(r, &mut arrays);
+    push_names(r, &mut arrays);
     pack(
         |j| {
             j.open_object();
@@ -433,6 +452,22 @@ fn push_languages(r: &SimulationResult, arrays: &mut Vec<(String, Array)>) {
             "languages".into(),
             Array::U8Owned(p.description.into_bytes()),
         ),
+    ]);
+}
+
+// THE NAMES' arrays (see the module's head), after the languages.
+fn push_names<'a>(r: &'a SimulationResult, arrays: &mut Vec<(String, Array<'a>)>) {
+    let n = &r.names;
+    arrays.extend([
+        ("nameKind".into(), Array::U8(&n.kind)),
+        ("namePlace".into(), Array::I32(&n.place)),
+        ("nameCell".into(), Array::I32(&n.cell)),
+        ("nameNamer".into(), Array::U16(&n.namer)),
+        ("nameYear".into(), Array::F32(&n.year)),
+        ("namePattern".into(), Array::U8(&n.pattern)),
+        ("nameMeaning".into(), Array::U8(&n.meaning)),
+        ("nameOwnLength".into(), Array::U8(&n.own_length)),
+        ("nameOwn".into(), Array::U8(&n.own)),
     ]);
 }
 

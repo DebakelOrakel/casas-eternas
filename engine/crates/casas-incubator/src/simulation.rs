@@ -62,6 +62,7 @@ use crate::languages::{Languages, PeopleInput};
 use crate::log::{LogEvent, POPULATION_MARKS};
 use crate::peoples::{Traits, Tree};
 use crate::peopling::Peopling;
+use crate::place_names::{Names, PlacesInput, places_of};
 use crate::settle::{Goods, settle_history};
 use crate::travel::{reset, travel_days, within_days};
 use casas_generator::climate::biomes::biome;
@@ -698,6 +699,9 @@ pub struct SimulationResult {
     /// languages and dialects, and each people's node. Packed since
     /// 2026-10-31 (v6), after the goods. Its events in `log`.
     pub languages: Languages,
+    /// THE NAMES (place_names.rs, TEG-139): the places' names as recipes.
+    /// Packed since 2026-10-31 (v6), after the languages.
+    pub names: Names,
     /// The cells whose traits the fields replaced; the branches' splits
     /// (peoples.rs).
     pub replaced: u32,
@@ -1061,6 +1065,11 @@ struct Sim<'h, 'a> {
     log: Vec<LogEvent>,
     // THE PEOPLES (peoples.rs): they feed back into nothing here.
     traits: Traits,
+    // THE NAMES (place_names.rs): each cell's people at the first tree
+    // step people lived in it, and that step's time; -1 and Infinity
+    // before.
+    first_people: Vec<i32>,
+    first_at: Vec<f32>,
     // THE ERUPTIONS: the share of what each cell carries the ash or the
     // gas takes now, and the ash falls that still fade.
     ash: Vec<f32>,
@@ -1318,6 +1327,12 @@ impl Sim<'_, '_> {
             keep,
             &mut self.log,
         );
+        for i in 0..people.len() {
+            if self.first_people[i] < 0 && people[i] > 0 && self.traits.ident[i] >= 0 {
+                self.first_people[i] = self.traits.ident[i];
+                self.first_at[i] = t as f32;
+            }
+        }
     }
 
     // The people a km² in PEOPLE_FRAME_STEP steps, as a kept state holds
@@ -1701,6 +1716,8 @@ pub fn simulate(
         landmass_reached: vec![0u8; h.landmasses],
         log: Vec::new(),
         traits: Traits::seed(h, input.peopling, input.seed, &way_days),
+        first_people: vec![-1i32; n],
+        first_at: vec![f32::INFINITY; n],
         ash: vec![0f32; n],
         ashes: Vec::new(),
     };
@@ -1713,6 +1730,8 @@ pub fn simulate(
     let mut villages: Vec<i32> = Vec::new();
     let mut village_from: Vec<f64> = Vec::new();
     let mut village_to: Vec<f64> = Vec::new();
+    // Each one's people when founded (the names, place_names.rs).
+    let mut village_people: Vec<i32> = Vec::new();
     let mut village_at = vec![-1i32; n];
     // Each cell's days from copper rich enough to find, to COPPER_DAYS.
     let mut copper_days = vec![f32::INFINITY; n];
@@ -2499,6 +2518,7 @@ pub fn simulate(
                 villages.extend([i as i32, way as i32]);
                 village_from.push(t);
                 village_to.push(f64::INFINITY);
+                village_people.push(sim.traits.ident[i]);
                 town.push(0.0);
             }
             // The copper, found and smelted; far only from the finds on
@@ -2725,6 +2745,7 @@ pub fn simulate(
                 villages.extend([i as i32, way as i32]);
                 village_from.push(t);
                 village_to.push(f64::INFINITY);
+                village_people.push(sim.traits.ident[i]);
                 town.push(0.0);
             }
         }
@@ -3233,6 +3254,19 @@ pub fn simulate(
     // events after the peoples'.
     let (languages, told) = Languages::build(&PeopleInput::of_tree(&tree), input.seed, t0, end);
     sim.log.extend(told);
+    // THE NAMES (place_names.rs): who names what, kept as recipes.
+    let names = Names::give(
+        &languages,
+        &places_of(&PlacesInput {
+            h,
+            villages: &villages,
+            village_from: &village_from,
+            village_people: &village_people,
+            village_town: &town,
+            first_people: &sim.first_people,
+            first_at: &sim.first_at,
+        }),
+    );
     population.truncate(((end - t0) / POPULATION_STEP) as usize + 1);
     let mut result = SimulationResult {
         arrival: sim.arrival,
@@ -3281,6 +3315,7 @@ pub fn simulate(
         trait_frames,
         tree,
         languages,
+        names,
         goods: Goods::default(),
     };
     // WHERE THE GOODS CAME FROM: the settlement of the history, as the

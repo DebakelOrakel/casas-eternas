@@ -42,7 +42,7 @@ pub use names::{
     Compounding, ENDING_TRIES, Ending, Grammar, JOINER_ALWAYS, Joiner, Kind, NameRecipe,
     PEOPLE_PREFIX, Slot,
 };
-pub use spelling::Spelling;
+pub use spelling::{Spelling, capitalise};
 pub use syllable::{Phonotactics, WORD_LENGTH_LONG, WORD_LENGTH_SHIFT, WORD_LENGTH_SHORT};
 
 use serde_json::{Value, json};

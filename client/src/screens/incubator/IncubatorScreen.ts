@@ -68,9 +68,9 @@ import type { ProbeRow } from '../../ui/mapProbe/probeCard'
 import type { World } from '../../world/query'
 import type { ChartPoint } from '../../map/worldView'
 import type { IncubatorAnswer, IncubatorRequest, PeoplesWithoutIds, PeoplingControls } from './incubatorWorker'
-import { NO_PEOPLE } from './historyPack'
+import { NAME_KINDS, NO_PEOPLE } from './historyPack'
 import { createChroniclePanel, type ChronicleEvent } from './chroniclePanel'
-import { deriveLanguageView, peopleCentre, type HistoryLanguages } from './languageView'
+import { deriveLanguageView, nameAt, peopleCentre, type HistoryLanguages } from './languageView'
 import { cellInputOf, CHART_HEIGHT, CHART_WIDTH, rainOf, type HistoryRain } from './historyInput'
 import { createLegendPanel } from '../../ui/legend/LegendPanel'
 import { createProgressPill } from '../../ui/progressPill/ProgressPill'
@@ -1031,7 +1031,17 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       events.push(event)
       if (overlay) eventPlaces.set(event, cellPoint(cell, overlay.u, overlay.v))
     }
-    const landmassName = (m: number): string => t('incubator.chronicle.landmass', { n: String(cellFacts ? cellFacts.rank[m] : m + 1) })
+    // A landmass by the name its first people gave it, in its form of the
+    // event's year (TEG-139, languageView.ts nameAt; the world's content,
+    // not i18n); by its number where it had no name by then.
+    const names = peoples?.languages.names ?? null
+    const landmassNames = new Map<number, number>()
+    if (names) for (let j = 0; j < names.kind.length; j++) if (NAME_KINDS[names.kind[j]] === 'landmass') landmassNames.set(names.place[j], j)
+    const landmassName = (m: number, at: number): string => {
+      const j = landmassNames.get(m)
+      const name = names && j !== undefined ? nameAt(names, j, at) : null
+      return name ?? t('incubator.chronicle.landmass', { n: String(cellFacts ? cellFacts.rank[m] : m + 1) })
+    }
     // The log (historyLogShared.ts), the history's: what it tells of each
     // kind.
     const log = logShown()
@@ -1053,7 +1063,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       const famines: Extract<LogEvent, { kind: 'famine' }>[] = []
       for (const e of log) {
         if (e.kind === 'departure') {
-          place({ time: 0, icon: '/icons/origin.png', rgb: [220, 30, 30], title: t('incubator.chronicle.event.departure'), detail: landmassName(facts.landmass[e.cell]) }, e.cell)
+          place({ time: 0, icon: '/icons/origin.png', rgb: [220, 30, 30], title: t('incubator.chronicle.event.departure'), detail: landmassName(facts.landmass[e.cell], e.at) }, e.cell)
         } else if (e.kind === 'centre') {
           const farm = e.lifeway === LIFEWAY.farmers
           place({
@@ -1061,7 +1071,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             icon: farm ? '/icons/wheat.png' : '/icons/pastures.png',
             rgb: LIFEWAY_COLOURS[farm ? LIFEWAY.farmers : LIFEWAY.herders],
             title: t(farm ? 'incubator.chronicle.event.farmCentre' : 'incubator.chronicle.event.herdCentre'),
-            detail: landmassName(facts.landmass[e.cell]),
+            detail: landmassName(facts.landmass[e.cell], e.at),
           }, e.cell)
         } else if (e.kind === 'domesticated') {
           if (tamed.has(e.id)) continue
@@ -1071,7 +1081,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             icon: e.plant ? '/icons/wheat.png' : '/icons/pastures.png',
             rgb: LIFEWAY_COLOURS[e.plant ? LIFEWAY.farmers : LIFEWAY.herders],
             title: t('incubator.chronicle.event.domesticated', { name: t(`${e.plant ? 'plant' : 'animal'}.${e.id}.label` as TKey) }),
-            detail: landmassName(facts.landmass[e.cell]),
+            detail: landmassName(facts.landmass[e.cell], e.at),
           }, e.cell)
         } else if (e.kind === 'copper') {
           place({
@@ -1079,7 +1089,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             icon: e.smelted ? '/icons/bonfire.png' : '/icons/copper_ore.png',
             rgb: COPPER_RGB,
             title: t(e.smelted ? 'incubator.chronicle.event.smelting' : 'incubator.chronicle.event.copper'),
-            detail: landmassName(facts.landmass[e.cell]),
+            detail: landmassName(facts.landmass[e.cell], e.at),
           }, e.cell)
         } else if (e.kind === 'city') {
           place({
@@ -1087,7 +1097,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             icon: '/icons/crown.png',
             rgb: CITY_RGB,
             title: t('incubator.chronicle.event.city'),
-            detail: t('incubator.chronicle.cityDetail', { people: Math.round(e.people).toLocaleString(getLocale()), landmass: landmassName(facts.landmass[e.cell]) }),
+            detail: t('incubator.chronicle.cityDetail', { people: Math.round(e.people).toLocaleString(getLocale()), landmass: landmassName(facts.landmass[e.cell], e.at) }),
           }, e.cell)
         } else if (e.kind === 'drowned') {
           place({
@@ -1095,7 +1105,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             icon: '/icons/ocean.png',
             rgb: DROWNED_RGB,
             title: t('incubator.chronicle.event.drowned'),
-            detail: t('incubator.chronicle.drownedDetail', { landmass: landmassName(e.landmass), area: Math.round(e.km2).toLocaleString(getLocale()), people: Math.round(e.people).toLocaleString(getLocale()) }),
+            detail: t('incubator.chronicle.drownedDetail', { landmass: landmassName(e.landmass, e.at), area: Math.round(e.km2).toLocaleString(getLocale()), people: Math.round(e.people).toLocaleString(getLocale()) }),
           }, e.cell)
         } else if (e.kind === 'drying') {
           place({
@@ -1103,12 +1113,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             icon: '/icons/dust.png',
             rgb: DRYING_RGB,
             title: t('incubator.chronicle.event.drying'),
-            detail: t('incubator.chronicle.dryingDetail', { landmass: landmassName(e.landmass), area: Math.round(e.km2).toLocaleString(getLocale()), people: Math.round(e.people).toLocaleString(getLocale()) }),
+            detail: t('incubator.chronicle.dryingDetail', { landmass: landmassName(e.landmass, e.at), area: Math.round(e.km2).toLocaleString(getLocale()), people: Math.round(e.people).toLocaleString(getLocale()) }),
           }, e.cell)
         } else if (e.kind === 'seaFloodsIce' || e.kind === 'landRises') {
           // THE REBOUND'S COASTS (casas-incubator simulation.rs).
           const flood = e.kind === 'seaFloodsIce'
-          const area = { landmass: landmassName(e.landmass), area: Math.round(e.km2).toLocaleString(getLocale()) }
+          const area = { landmass: landmassName(e.landmass, e.at), area: Math.round(e.km2).toLocaleString(getLocale()) }
           place({
             time: e.at,
             icon: flood ? '/icons/ocean.png' : '/icons/continent.png',
@@ -1117,7 +1127,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             detail: t(flood ? 'incubator.chronicle.seaFloodsIceDetail' : 'incubator.chronicle.landRisesDetail', area),
           }, e.cell)
         } else if (e.kind === 'eruption' || e.kind === 'fissure') {
-          const measure = { landmass: landmassName(e.landmass), area: Math.round(e.km2).toLocaleString(getLocale()), people: Math.round(e.people).toLocaleString(getLocale()), left: Math.round(e.left).toLocaleString(getLocale()) }
+          const measure = { landmass: landmassName(e.landmass, e.at), area: Math.round(e.km2).toLocaleString(getLocale()), people: Math.round(e.people).toLocaleString(getLocale()), left: Math.round(e.left).toLocaleString(getLocale()) }
           place({
             time: e.at,
             icon: '/icons/volcano.png',
@@ -1182,7 +1192,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             icon: group ? group.icon : '/icons/deer.png',
             rgb: EXTINCT_RGB,
             title: t('incubator.chronicle.event.extinct', { animal: t(`animal.${e.id}.label` as TKey) }),
-            detail: landmassName(e.landmass),
+            detail: landmassName(e.landmass, e.at),
           }, e.cell)
         } else if (e.kind === 'crossing') {
           if (!toldCrossing(e, spreadShown()?.people.origin ?? -1)) continue
@@ -1201,7 +1211,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             icon: '/icons/village.png',
             rgb: LIFEWAY_COLOURS[e.lifeway],
             title: t('incubator.chronicle.event.firstVillage'),
-            detail: `${nameOf(e.village)} · ${landmassName(facts.landmass[e.cell])}`,
+            detail: `${nameOf(e.village)} · ${landmassName(facts.landmass[e.cell], e.at)}`,
           }, e.cell)
         } else if (e.kind === 'trade' && settled) {
           // Placed at the link's middle.
@@ -1258,7 +1268,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           icon: '/icons/warning.png',
           rgb: FAMINE_RGB,
           title: t('incubator.chronicle.event.famine'),
-          detail: t('incubator.chronicle.famineDetail', { landmass: landmassName(first.landmass), people: Math.round(lost).toLocaleString(getLocale()), left: Math.round(left).toLocaleString(getLocale()), villages: String(villages) }),
+          detail: t('incubator.chronicle.famineDetail', { landmass: landmassName(first.landmass, first.at), people: Math.round(lost).toLocaleString(getLocale()), left: Math.round(left).toLocaleString(getLocale()), villages: String(villages) }),
         }, worst.cell)
       }
     }

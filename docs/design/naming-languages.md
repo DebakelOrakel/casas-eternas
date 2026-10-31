@@ -179,3 +179,13 @@ a family for each group of step 1, a language where a people lived
 dated sound changes and new words; kept in H1 as the choices made (some
 50 to 80 KB a world), the forms derived from them. Its arising and its
 end are events of the log. The window shows it.
+2026-10-31: the names of the places are built (TEG-139,
+`engine/crates/casas-incubator/src/place_names.rs`): with the history
+(H1), the villages, the rivers, the mountains, the lakes and the
+landmasses named by their peoples (the people of the village, the first
+people at the river's mouth, around the mountain or the lake, on the
+landmass), in the namer's speech of the year, with what is at the place;
+kept as recipes (some 60 to 220 KB a world), the forms in a year derived
+through the namer's line's sound changes. The slot X (a near place's
+name) is not drawn: it is an exonym. The chronicle names the landmasses,
+the window lists the names of a language.

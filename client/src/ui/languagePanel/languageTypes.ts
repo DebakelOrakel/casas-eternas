@@ -91,9 +91,13 @@ export interface LanguageView {
   // Asked for when a node is shown; null where there is none (a dialect,
   // or an engine that does not make one).
   detail(id: string): LanguageDetail | null
-  // The names given in a node's language, from `from`, `count` of them,
-  // and how many there are.
-  names(id: string, from: number, count: number): { total: number; rows: readonly NameEntry[] }
+  // The names given in a node's language or below it, from `from`, `count`
+  // of them, and how many there are: those given by `year` (all where
+  // none), each in its form of that year.
+  names(id: string, from: number, count: number, year?: number): { total: number; rows: readonly NameEntry[] }
+  // The nodes that gave a name holding `query` (lower case) by `year`, in
+  // its form of that year: the search finds them.
+  namesFound(query: string, year: number): ReadonlySet<string>
   // A people's name: the world's content.
   peopleName(people: number): string
 }

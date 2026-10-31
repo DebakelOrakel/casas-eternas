@@ -245,7 +245,7 @@ export function createLanguagePanel(host: HTMLElement, options: {
         paintLanguage()
       },
     }))
-    worldColumn.replaceChildren(renderWorld({ view, node, peoplesWhole, namesShown }, {
+    worldColumn.replaceChildren(renderWorld({ view, node, year: shownYear(), peoplesWhole, namesShown }, {
       showOnMap: options.onShowOnMap,
       peoplesWhole: () => {
         peoplesWhole = true

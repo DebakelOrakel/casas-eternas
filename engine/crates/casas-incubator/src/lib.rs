@@ -21,6 +21,7 @@ pub mod niche;
 pub mod pack;
 pub mod peoples;
 pub mod peopling;
+pub mod place_names;
 pub mod settle;
 pub mod simulation;
 pub mod travel;

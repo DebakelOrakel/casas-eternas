@@ -26,6 +26,12 @@ export function fixtureView(fixture: LanguageFixture): LanguageView {
       const rows = fixture.names[id] ?? []
       return { total: rows.length, rows: rows.slice(from, from + count) }
     },
+    namesFound: (query, year) => {
+      const found = new Set<string>()
+      if (!query) return found
+      for (const [id, rows] of Object.entries(fixture.names)) if (rows.some((r) => r.given <= year && r.name.toLowerCase().includes(query))) found.add(id)
+      return found
+    },
     peopleName: (people) => fixture.peoples[String(people)] ?? String(people + 1),
   }
 }

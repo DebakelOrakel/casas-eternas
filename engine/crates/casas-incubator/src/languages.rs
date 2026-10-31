@@ -860,6 +860,13 @@ pub struct Cache {
 }
 
 impl Cache {
+    /// The speeches made so far forgotten, the proto-languages kept: the
+    /// names (place_names.rs) ask one node's speech at many years, a node
+    /// after the other.
+    pub fn forget_speeches(&mut self) {
+        self.speeches.clear();
+    }
+
     fn proto(&mut self, seed: u32) -> &Language {
         self.protos
             .entry(seed)

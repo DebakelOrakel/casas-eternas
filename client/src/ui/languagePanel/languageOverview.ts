@@ -186,7 +186,7 @@ export function renderOverview(state: OverviewState, actions: OverviewActions): 
     figure(t('language.overview.speakers'), extinct ? '†' : speakers, peoples),
     figure(t('language.overview.since'), yearNumber(node.born), from ? t('language.overview.from', { name: nodeName(from) }) : ''),
     figure(t('language.filter.dialects'), String(below.dialects), t('language.overview.dialectsWorld', { count: world })),
-    figure(t('language.overview.names'), formatCount(view.names(node.id, 0, 0).total), t('language.overview.namesKinds')),
+    figure(t('language.overview.names'), formatCount(view.names(node.id, 0, 0, state.year).total), t('language.overview.namesKinds')),
   )
   root.append(figures)
 

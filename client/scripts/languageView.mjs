@@ -21,8 +21,15 @@
 //    the screen's furniture called as before the set existed.
 // 4. The catalog: one `language.meaning.<id>` for every meaning of the
 //    language kit, and no other.
+// 5. The names (TEG-139, the crate's place_names.rs): on the trees of 1.,
+//    a village for each people at a year of its life and some rivers,
+//    mountains, lakes and landmasses: every village has a name; the native
+//    build (engine/dist/casas-incubator.node) gives the WASM's names, bit
+//    for bit; the view lists each name under its namer and the nodes above
+//    it, by the time; the search finds a name.
 import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 
 const CLIENT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
@@ -41,6 +48,8 @@ const M = {
 const INCUBATOR = new URL('../../engine/dist/incubator/', import.meta.url)
 const wasm = await import(new URL('casas-incubator.js', INCUBATOR).href)
 await wasm.default({ module_or_path: await readFile(new URL('casas-incubator_bg.wasm', INCUBATOR)) })
+// The native build (the job worker's), for the names' check (5.).
+const native = createRequire(import.meta.url)(fileURLToPath(new URL('../../engine/dist/casas-incubator.node', import.meta.url)))
 
 let failures = 0
 const check = (name, ok, detail = '') => {
@@ -297,6 +306,64 @@ for (const locale of ['en', 'de']) {
   const catalog = JSON.parse(readFileSync(`${CLIENT}/src/i18n/locales/${locale}/language.json`, 'utf8'))
   const keys = Object.keys(catalog).filter((k) => k.startsWith('language.meaning.')).map((k) => k.slice('language.meaning.'.length))
   check(`${locale}: one meaning key for each of the kit's ${kit.length} meanings, no other`, keys.length === kit.length && kit.every((id) => keys.includes(id)))
+}
+
+// --- 5. the names -------------------------------------------------------------
+
+console.log('5. the names (the crate\'s place_names.rs, its WASM and native builds)')
+const KINDS = ['village', 'river', 'mountain', 'lake', 'landmass']
+for (const seed of [1, 7, 2840]) {
+  const made = makeHistory(seed)
+  const { languages, events } = languagesOf(made, seed)
+  const { tree } = made
+  const x = languageInputs(made)
+  // A village for each people, at a year of its life; then a river, a
+  // mountain, a lake, a landmass for every fifth people.
+  const draw = random(seed + 1)
+  const kinds = []
+  const peoples = []
+  const years = []
+  for (let p = 0; p < tree.parent.length; p++) {
+    const until = Math.min(tree.ended[p], made.end)
+    kinds.push(0)
+    peoples.push(p)
+    years.push(Math.round(tree.born[p] + draw() * (until - tree.born[p])))
+  }
+  for (let p = 0; p < tree.parent.length; p += 5) for (let k = 1; k < 5; k++) {
+    kinds.push(k)
+    peoples.push(p)
+    years.push(tree.born[p])
+  }
+  const args = [tree.parent, tree.group, Float64Array.from(tree.born), Float64Array.from(tree.ended), tree.mergedInto, tree.big, x.share, x.replaced, x.heart, x.heartApart, seed, made.start, made.end, Uint8Array.from(kinds), Int32Array.from(peoples), Float64Array.from(years)]
+  const fromWasm = wasm.namesOfPlaces(...args)
+  const fromNative = native.namesOfPlaces(...args)
+  check(`seed ${seed}: the native build gives the WASM's names`, fromWasm === fromNative)
+  const out = JSON.parse(fromWasm)
+  const a = out.arrays
+  const villages = kinds.filter((k) => k === 0).length
+  const villageNames = a.nameKind.filter((k) => k === 0).length
+  check(`seed ${seed}: every village has a name (${villageNames} of ${villages}), not empty at the end`, villageNames === villages && a.nameKind.length === kinds.length && out.atEnd.every((s) => s !== ''))
+  const changed = out.forms.filter((f) => f.length > 2).length
+  check(`seed ${seed}: names wear down over time (${changed} of ${out.forms.length} change their form)`, changed > 0)
+  console.log(`  seed ${seed}: ${a.nameKind.length} names, e.g. ${out.atEnd.slice(0, 4).join(', ')}; ${KINDS.map((k, i) => `${a.nameKind.filter((x) => x === i).length} ${k}`).join(', ')}`)
+  // The view: a name under its namer and every node above it.
+  const names = {
+    kind: Uint8Array.from(a.nameKind), town: new Uint8Array(a.nameKind.length), place: Int32Array.from(a.namePlace), cell: Int32Array.from(a.nameCell),
+    namer: Uint16Array.from(a.nameNamer), year: Float32Array.from(a.nameYear),
+    forms: out.forms.map((list) => ({ years: list.filter((_, k) => k % 2 === 0), forms: list.filter((_, k) => k % 2 === 1) })),
+  }
+  const log = [...made.log, ...events].sort((p, q) => p.at - q.at)
+  const view = M.view.deriveLanguageView({ ...made, log, languages: { ...languages, names } })
+  const listed = a.nameKind.filter((k) => KINDS[k] !== 'landmass').length
+  const families = view.nodes.filter((n) => n.level === 'family')
+  const total = families.reduce((s, f) => s + view.names(f.id, 0, 0).total, 0)
+  check(`seed ${seed}: the families list every name but the landmasses' (${total} of ${listed})`, total === listed)
+  const mid = (made.start + made.end) / 2
+  const byMid = families.reduce((s, f) => s + view.names(f.id, 0, 0, mid).total, 0)
+  check(`seed ${seed}: by a year, the names given by then (${byMid})`, byMid === a.nameYear.filter((y, j) => y <= mid && KINDS[a.nameKind[j]] !== 'landmass').length)
+  const row = view.names(families[0].id, 0, 1)
+  const word = row.rows[0]?.name.toLowerCase().slice(0, 4) ?? ''
+  check(`seed ${seed}: the search finds a name's node ("${word}")`, word !== '' && view.namesFound(word, made.end).has(row.rows[0].language))
 }
 
 await server.close()

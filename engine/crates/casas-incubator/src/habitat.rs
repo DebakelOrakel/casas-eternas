@@ -169,6 +169,20 @@ pub struct Habitat {
     /// Level 1's volcanoes (`CellInput::volcanoes`); none for a level
     /// without them.
     pub volcanoes: Vec<Volcano>,
+    /// A lake in the cell (a texel of it under one); `near_lake` is this
+    /// or a neighbour's. The names (place_names.rs) take the lakes from it.
+    pub lake: Vec<u8>,
+    /// The rivers that `near_river` holds, each its line (the index of its
+    /// ribbon in `CellInput::rivers`) and the land cells it crosses,
+    /// downstream, each once: the names (place_names.rs) take them.
+    pub rivers: Vec<RiverCells>,
+}
+
+/// A river of the habitat (`Habitat::rivers`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RiverCells {
+    pub line: u32,
+    pub cells: Vec<u32>,
 }
 
 impl Habitat {
@@ -375,11 +389,16 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
     // world texel at a time; the ephemeral ones left out.
     let mut near_river = vec![0u8; n];
     let mut river_size = vec![0f32; n];
+    let mut rivers: Vec<RiverCells> = Vec::new();
     if let Some((points, lengths, regimes)) = input.rivers {
         let mut start = 0usize;
         for r in 0..lengths.len() {
             let count = lengths[r] as usize;
             if regimes[r] != RIVER_EPHEMERAL {
+                let mut river = RiverCells {
+                    line: r as u32,
+                    cells: Vec::new(),
+                };
                 for k in start..(start + count).saturating_sub(1) {
                     let ax = points[3 * k] as f64;
                     let ay = points[3 * k + 1] as f64;
@@ -400,7 +419,15 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
                         }
                         near_river[c] = 1;
                         river_size[c] = js::max(river_size[c] as f64, size) as f32;
+                        if river.cells.last() != Some(&(c as u32))
+                            && !river.cells.contains(&(c as u32))
+                        {
+                            river.cells.push(c as u32);
+                        }
                     }
+                }
+                if !river.cells.is_empty() {
+                    rivers.push(river);
                 }
             }
             start += count;
@@ -509,6 +536,8 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
         width_km: domain.width * fm.unit_m / 1000.0,
         height_km: domain.height * fm.unit_m / 1000.0,
         volcanoes,
+        lake,
+        rivers,
     };
     (habitat, owners)
 }

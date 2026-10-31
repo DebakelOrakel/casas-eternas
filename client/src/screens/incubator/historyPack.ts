@@ -25,6 +25,10 @@ import type { LogEvent } from './historyLogShared'
 // THE LANGUAGES (since 2026-10-31, TEG-138; the crate's languages.rs and
 // pack.rs): each people's node, and the tree of the families, languages
 // and dialects with their descriptions (LanguagesTree).
+//
+// THE NAMES (since 2026-10-31, TEG-139; the crate's place_names.rs and
+// pack.rs): the places' names as recipes (PlaceNamesPacked). A history
+// packed before them has none (`names` null).
 
 type Typed = Float32Array | Int32Array | Uint8Array | Uint16Array
 const TYPES = { f32: Float32Array, i32: Int32Array, u8: Uint8Array, u16: Uint16Array } as const
@@ -145,6 +149,44 @@ export const LANGUAGE_ARRAYS: Record<keyof LanguagesTree, string> = {
   description: 'languages',
 }
 
+// THE NAMES (pack.rs, place_names.rs): by name its kind (NAME_KINDS), its
+// place (a village's index, a river's line in level 1's ribbons, a
+// mountain's highest cell, a lake's first cell, a landmass's id), its cell
+// (the village's, the river's mouth, the mountain's highest, the lake's
+// first, the landmass's first people's first), the node of the languages'
+// tree that gave it, the year, and the recipe: its pattern, two meanings
+// (255 for none), the sounds of its word of its own (`ownLength` a name,
+// `own` one after the other). The letters follow from the tree and the
+// kit, through the crate (its WASM `PlaceNames`).
+export interface PlaceNamesPacked {
+  kind: Uint8Array
+  place: Int32Array
+  cell: Int32Array
+  namer: Uint16Array
+  year: Float32Array
+  pattern: Uint8Array
+  meaning: Uint8Array
+  ownLength: Uint8Array
+  own: Uint8Array
+}
+
+// `PlaceNamesPacked.kind` (the crate's language/names.rs Kind).
+export const NAME_KINDS = ['village', 'river', 'mountain', 'lake', 'landmass'] as const
+export type NameKind = (typeof NAME_KINDS)[number]
+
+// The names' arrays by their pack names.
+export const NAME_ARRAYS: Record<keyof PlaceNamesPacked, string> = {
+  kind: 'nameKind',
+  place: 'namePlace',
+  cell: 'nameCell',
+  namer: 'nameNamer',
+  year: 'nameYear',
+  pattern: 'namePattern',
+  meaning: 'nameMeaning',
+  ownLength: 'nameOwnLength',
+  own: 'nameOwn',
+}
+
 // What a packed history holds.
 export interface PackedHistory {
   people: PeopleResult
@@ -172,6 +214,7 @@ export interface PackedHistory {
   }
   peoples: PeoplesTree
   languages: LanguagesTree
+  names: PlaceNamesPacked | null
 }
 
 interface Plain {
@@ -254,6 +297,7 @@ export function unpackHistory(buffer: ArrayBuffer): PackedHistory | null {
         ids: Array.from({ length: plain.frames }, (_, k) => get<Uint16Array>(`peopleIds${k}`)),
       },
       languages: Object.fromEntries(Object.entries(LANGUAGE_ARRAYS).map(([key, name]) => [key, get(name)])) as unknown as LanguagesTree,
+      names: arrays.has(NAME_ARRAYS.kind) ? (Object.fromEntries(Object.entries(NAME_ARRAYS).map(([key, name]) => [key, get(name)])) as unknown as PlaceNamesPacked) : null,
     }
   } catch {
     return null

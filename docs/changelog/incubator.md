@@ -5,6 +5,7 @@ settlement, the exchange and the chronicle. See [README](./README.md) for the fo
 The incubator's controls and layout are in [ui.md](./ui.md).
 
 ## 2026-10-31
+- **new** Chronicle: the landmasses have the names their first peoples gave them, and the languages window lists the names of the villages, rivers, mountains and lakes given in each language. `language.world.names`
 - **new** Chronicle: the chronicle tells when languages arise and die out, and the languages panel shows the languages the peoples made. `incubator.chronicle.event.languageArises`
 - **new** Peoples: a languages panel and window show the tree of the peoples' languages, with placeholder languages until the language core exists. `language.panel.title`
 - **changed** New Stone Age: the fields also spread where only a part of the land is good to farm, as a river's floodplain. `incubator.step.newStoneAge`

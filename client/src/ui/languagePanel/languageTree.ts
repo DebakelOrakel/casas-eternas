@@ -11,8 +11,8 @@ import { bornBy, extinctBy, type LanguageIndex, type LanguageNode, type Language
 // language always show: they are the frame of the rest). The dialects show
 // only with their switch on. A list of languages or of dialects shows its
 // largest few and a row for the rest. A search keeps the nodes whose name,
-// or the name of one of whose peoples, holds it, with the nodes above them,
-// unfolded.
+// the name of one of whose peoples, or a name of a place given in it by
+// the time, holds it, with the nodes above them, unfolded.
 
 // How many languages of a family, and dialects of a language, show before
 // the "more" row.
@@ -73,8 +73,9 @@ export function countsBelow(index: LanguageIndex, id: string, state: Pick<TreeSt
 function searchHits(state: TreeState): Set<string> | null {
   if (!state.query) return null
   const hits = new Set<string>()
+  const named = state.view.namesFound(state.query, state.year)
   for (const node of state.view.nodes) {
-    const found = nodeName(node).toLowerCase().includes(state.query) || node.peoples.some((p) => state.view.peopleName(p).toLowerCase().includes(state.query))
+    const found = nodeName(node).toLowerCase().includes(state.query) || node.peoples.some((p) => state.view.peopleName(p).toLowerCase().includes(state.query)) || named.has(node.id)
     if (!found) continue
     for (let at: LanguageNode | undefined = node; at && !hits.has(at.id); at = at.parent === null ? undefined : state.index.byId.get(at.parent)) hits.add(at.id)
   }

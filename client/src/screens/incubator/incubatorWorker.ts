@@ -1,11 +1,11 @@
-import initHistory, { coldCurve, iceReachKm, Incubator, languageView } from 'casas-incubator-wasm/casas-incubator.js'
+import initHistory, { coldCurve, iceReachKm, Incubator, languageView, PlaceNames } from 'casas-incubator-wasm/casas-incubator.js'
 import historyWasmUrl from 'casas-incubator-wasm/casas-incubator_bg.wasm?url'
 import { ANIMALS } from './animals'
 import type { AnimalLayer, CellInput, PeopleResult, PlantLayer, SettleResult, TreeLayer } from './cellsShared'
 import { incubatorOf } from './historyInput'
 import type { LogEvent } from './historyLogShared'
 import { peopleIdsOf, unpackHistory, unpackSettled, type LanguagesTree, type PackedHistory, type PeoplesTree } from './historyPack'
-import type { HistoryLanguages, LanguagesMade } from './languageView'
+import { TOWN_PEOPLE, type HistoryLanguages, type HistoryNames, type LanguagesMade } from './languageView'
 import { PEOPLE_FRAME_STEP } from './peopleShared'
 import type { PeoplingInput } from '../../world/historyArtifacts'
 import { PLANTS } from './plants'
@@ -88,7 +88,33 @@ function languagesOf(h: PackedHistory): HistoryLanguages {
   const l = h.languages
   const made = JSON.parse(languageView(l.peopleLanguage, l.parent, l.level, l.people, l.from, l.at, l.until, l.seed, l.style, l.changeStart, l.changeYear, l.change, l.changeChoice, l.wordStart, l.wordYear, l.wordMeaning)) as LanguagesMade
   const tree = Object.fromEntries(Object.entries(l).map(([k, a]) => [k, a.slice()])) as unknown as LanguagesTree
-  return { tree, made }
+  return { tree, made, names: namesOf(h) }
+}
+
+// THE NAMES of a history (TEG-139): its packed recipes, and their forms
+// over time as the crate spells them (its `PlaceNames`); null for a
+// history packed before them.
+function namesOf(h: PackedHistory): HistoryNames | null {
+  const n = h.names
+  if (!n) return null
+  const l = h.languages
+  const book = new PlaceNames(l.peopleLanguage, l.parent, l.level, l.people, l.from, l.at, l.until, l.seed, l.style, l.changeStart, l.changeYear, l.change, l.changeChoice, l.wordStart, l.wordYear, l.wordMeaning, n.kind, n.place, n.cell, n.namer, n.year, n.pattern, n.meaning, n.ownLength, n.own)
+  let raw: (number | string)[][]
+  try {
+    raw = JSON.parse(book.forms(0, book.count())) as (number | string)[][]
+  } finally {
+    book.free()
+  }
+  const towns = h.lifeways.villages?.villageTown
+  return {
+    kind: n.kind.slice(),
+    town: Uint8Array.from(n.kind, (k, j) => Number(k === 0 && !!towns && towns[n.place[j]] >= TOWN_PEOPLE)),
+    place: n.place.slice(),
+    cell: n.cell.slice(),
+    namer: n.namer.slice(),
+    year: n.year.slice(),
+    forms: raw.map((list) => ({ years: list.filter((_, k) => k % 2 === 0) as number[], forms: list.filter((_, k) => k % 2 === 1) as string[] })),
+  }
 }
 
 // The spread, copied for an answer.
@@ -98,7 +124,7 @@ function peopleAnswer(h: PackedHistory, ms: number): void {
   const { ids: _ids, ...tree } = h.peoples
   const peoples = Object.fromEntries(Object.entries(tree).map(([k, a]) => [k, a.slice()])) as unknown as PeoplesWithoutIds
   const languages = languagesOf(h)
-  worker.postMessage({ type: 'people', start: h.start, end: h.end, peoples, languages, ms, ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer, ...Object.values(peoples).map((a) => a.buffer as ArrayBuffer), ...Object.values(languages.tree).map((a) => a.buffer as ArrayBuffer)])
+  worker.postMessage({ type: 'people', start: h.start, end: h.end, peoples, languages, ms, ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer, ...Object.values(peoples).map((a) => a.buffer as ArrayBuffer), ...Object.values(languages.tree).map((a) => a.buffer as ArrayBuffer), ...(languages.names ? [languages.names.kind, languages.names.town, languages.names.place, languages.names.cell, languages.names.namer, languages.names.year].map((a) => a.buffer as ArrayBuffer) : [])])
 }
 
 // A history's bytes taken: read, kept.

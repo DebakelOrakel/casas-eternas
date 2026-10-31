@@ -10,7 +10,7 @@
 
 use crate::{
     climate_history, eruptions, habitat, language, languages, log, niche, peoples, peopling,
-    settle, simulation, travel,
+    place_names, settle, simulation, travel,
 };
 use serde_json::{Map, Value, json};
 
@@ -87,7 +87,10 @@ use serde_json::{Map, Value, json};
 /// end in the log (new kinds, which a reader that does not know them
 /// passes over); since the history reads it, the language kit
 /// (`data/language/`, without its notes) and the language core's
-/// constants are part of the version.
+/// constants are part of the version; the names of the places as recipes
+/// (place_names.rs, TEG-139, 2026-10-31): the villages, the rivers, the
+/// mountains, the lakes and the landmasses named by their peoples, packed
+/// after the languages (the other arrays and the log the same bytes).
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
@@ -108,7 +111,7 @@ fn object(pairs: Vec<(&str, f64)>) -> Value {
 
 /// The tuning by module, the catalog and the language kit: `{ climate,
 /// eruptions, habitat, niche, travel, peopling, simulation, peoples,
-/// language, languages, settle, log, catalog, kit }`.
+/// language, languages, names, settle, log, catalog, kit }`.
 pub fn constants() -> Value {
     let catalog: Value =
         serde_json::from_str(include_str!("../data/catalog.json")).expect("data/catalog.json");
@@ -182,6 +185,11 @@ pub fn constants() -> Value {
         "languages": object(table!(languages:
             LANGUAGE_APART_YEARS, LANGUAGE_SHARE, CENTURY_YEARS, SOUND_CHANGE_CHANCE, WORD_LOSS_CHANCE, CHANGE_TRIES,
             CHANGE_LEAST_WORDS, DIALECT_CHANGES_LEAST, DIALECT_CHANGES_MOST,
+        )),
+        "names": object(table!(place_names:
+            RIVER_LEAST_CELLS, LAKE_LEAST_CELLS, MOUNTAIN_LEAST_M, MOUNTAIN_LEAST_CELLS, MOUNTAINS_A_LANDMASS,
+            LANDMASS_LEAST_KM2, HILL_SLOPE, HIGH_M, SNOW_M, BIG_RIVER_SIZE, BIG_LAKE_CELLS, BIG_LANDMASS_KM2,
+            MARKET_PEOPLE, NAME_TRIES,
         )),
         "settle": object(table!(settle:
             CARRYING_FULL, DENSITY_TAU, FORAGER_WEIGHT, LINKS, LINK_DAYS, SOURCE_RICH, SOURCE_DAYS,
@@ -297,6 +305,8 @@ mod tests {
         "SERIES",
         "BOOLS",
         "ALL",
+        // The packed names' mark of an empty slot (place_names.rs).
+        "NO_MEANING",
     ];
 
     // Every constant of the modules is in the table or is format: one
@@ -319,6 +329,7 @@ mod tests {
             ("catalog", include_str!("catalog.rs")),
             ("pack", include_str!("pack.rs")),
             ("languages", include_str!("languages.rs")),
+            ("names", include_str!("place_names.rs")),
             ("language", include_str!("language/mod.rs")),
             ("language", include_str!("language/change.rs")),
             ("language", include_str!("language/draw.rs")),

@@ -91,6 +91,21 @@ declare module 'casas-incubator-wasm/casas-incubator.js' {
   // arrays and the log's events (languages.rs `tree_json`). For the
   // languages harness.
   export function languagesOfPeoples(parent: Int32Array, group: Int32Array, born: Float64Array, ended: Float64Array, mergedInto: Int32Array, big: Uint8Array, share: Float64Array, replaced: Uint8Array, heart: Int32Array, heartApart: Int32Array, seed: number, start: number, end: number): string
+  // THE NAMES of places over a tree of peoples given as arrays, then by
+  // place its kind, namer and year, as JSON (place_names.rs
+  // `names_of_places_json`). For the languages harness.
+  export function namesOfPlaces(parent: Int32Array, group: Int32Array, born: Float64Array, ended: Float64Array, mergedInto: Int32Array, big: Uint8Array, share: Float64Array, replaced: Uint8Array, heart: Int32Array, heartApart: Int32Array, seed: number, start: number, end: number, kinds: Uint8Array, people: Int32Array, years: Float64Array): string
+  // THE NAMES of a history (place_names.rs `NameBook`): the packed tree's
+  // arrays (as languageView's), then the packed names' (historyPack.ts
+  // PlaceNamesPacked); `at`: the names in a year, JSON, "" for one not
+  // given by then; `forms`: by name [year, form, …] over time, JSON.
+  export class PlaceNames {
+    constructor(peopleLanguage: Int32Array, parent: Int32Array, level: Uint8Array, people: Int32Array, from: Float32Array, at: Float32Array, until: Float32Array, seed: Int32Array, style: Uint8Array, changeStart: Int32Array, changeYear: Uint16Array, change: Uint8Array, changeChoice: Uint8Array, wordStart: Int32Array, wordYear: Uint16Array, wordMeaning: Uint8Array, kind: Uint8Array, place: Int32Array, cell: Int32Array, namer: Uint16Array, year: Float32Array, pattern: Uint8Array, meaning: Uint8Array, ownLength: Uint8Array, own: Uint8Array)
+    count(): number
+    at(year: number, from: number, count: number): string
+    forms(from: number, count: number): string
+    free(): void
+  }
   export class Incubator {
     constructor(sphere: boolean, spacingKm: number, width: number, height: number, nodes: Int32Array, nodeW: number, nodeH: number, land: Uint8Array, biome: Uint8Array, koppen: Uint8Array, z: Float32Array, lakeDepth: Float32Array, ecology: Uint8Array, ecologyPresent: number, riverPoints?: Float32Array, riverLengths?: Uint32Array, riverRegimes?: Uint8Array, shelfCarrying?: Uint8Array, volcanoes?: Float64Array)
     free(): void

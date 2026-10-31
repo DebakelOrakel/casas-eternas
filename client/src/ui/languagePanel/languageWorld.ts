@@ -17,6 +17,8 @@ export const NAMES_PAGE = 50
 export interface WorldState {
   view: LanguageView
   node: LanguageNode
+  // The time shown: the names given by then, in their form of then.
+  year: number
   peoplesWhole: boolean
   namesShown: number
 }
@@ -51,7 +53,7 @@ export function renderWorld(state: WorldState, actions: WorldActions): HTMLEleme
     root.append(element)
   }
 
-  const names = view.names(node.id, 0, state.namesShown)
+  const names = view.names(node.id, 0, state.namesShown, state.year)
   if (names.total > 0) {
     const { element, body } = section('language.world.names', true)
     for (const entry of names.rows) {

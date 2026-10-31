@@ -1,5 +1,5 @@
-import type { LanguageDetail, LanguageLevel, LanguageNode, LanguageView } from '../../ui/languagePanel/languageTypes'
-import { LANGUAGE_LEVEL, type LanguagesTree } from './historyPack'
+import type { LanguageDetail, LanguageLevel, LanguageNode, LanguageView, NameEntry } from '../../ui/languagePanel/languageTypes'
+import { LANGUAGE_LEVEL, NAME_KINDS, type LanguagesTree } from './historyPack'
 import type { LogEvent } from './historyLogShared'
 import { KEEP_YEARS } from './peopleShared'
 import type { PeoplesWithoutIds } from './incubatorWorker'
@@ -41,10 +41,44 @@ export interface LanguagesMade {
   peoples: string[]
 }
 
-// The languages a history carries: its tree and what the crate made of it.
+// THE NAMES a history carries (TEG-139; historyPack.ts PlaceNamesPacked,
+// the crate's place_names.rs): by name its kind (NAME_KINDS' index), 1
+// where a village is a town (its town at the history's end TOWN_PEOPLE or
+// more), its place and cell, the node of the tree that gave it, the year
+// it was given, and its forms over time as the crate spells them (its WASM
+// `PlaceNames`): the years from which each form holds, rising, and the
+// forms. The names are the world's content: no i18n.
+export interface HistoryNames {
+  kind: Uint8Array
+  town: Uint8Array
+  place: Int32Array
+  cell: Int32Array
+  namer: Uint16Array
+  year: Float32Array
+  forms: { years: number[]; forms: string[] }[]
+}
+
+// A village is a town in the languages panel from this town at the
+// history's end, people (simulation.rs THE TOWNS; the city is one). On the
+// three v15 worlds (2026-10-31) 719 of Morvane's 5 383 villages and camps,
+// 802 of Thalassor's 9 360, 584 of Zephyra's 2 438.
+export const TOWN_PEOPLE = 1000
+
+// Name j in `year`: the form of that year; null before it was given.
+export function nameAt(names: HistoryNames, j: number, year: number): string | null {
+  if (year < names.year[j]) return null
+  const { years, forms } = names.forms[j]
+  let k = 0
+  while (k + 1 < years.length && years[k + 1] <= year) k++
+  return forms[k] ?? null
+}
+
+// The languages a history carries: its tree, what the crate made of it,
+// and the names of its places (null for a history packed before them).
 export interface HistoryLanguages {
   tree: LanguagesTree
   made: LanguagesMade
+  names: HistoryNames | null
 }
 
 // The kept states' times (as IncubatorScreen keeps them): every KEEP_YEARS
@@ -130,6 +164,31 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
     }
     if (peoplesTree.big[p]) for (let at = own; at >= 0; at = parentOf[at]) nodes[at].peoples.push(p)
   }
+  // THE NAMES by the view's node: each name under the node that gave it
+  // and every node above it, in the order given.
+  const names = history.languages.names
+  const namesOf = new Map<string, number[]>()
+  const namerOf: string[] = []
+  if (names) {
+    const order = Array.from(names.kind, (_, j) => j).sort((a, b) => names.year[a] - names.year[b] || a - b)
+    for (const j of order) {
+      const k = names.namer[j]
+      const id = tree.level[k] === LANGUAGE_LEVEL.dialect ? viewId(tree, k) : spokenId(tree, k)
+      namerOf[j] = id
+      for (let at = position.get(id) ?? -1; at >= 0; at = parentOf[at]) {
+        const list = namesOf.get(nodes[at].id)
+        if (list) list.push(j)
+        else namesOf.set(nodes[at].id, [j])
+      }
+    }
+  }
+  // The names a panel lists: not the landmasses' (their kind has no
+  // catalog key yet).
+  const listed = (j: number, year: number): boolean => names !== null && NAME_KINDS[names.kind[j]] !== 'landmass' && names.year[j] <= year
+  const entry = (j: number, year: number): NameEntry => {
+    const kind = NAME_KINDS[names!.kind[j]]
+    return { name: nameAt(names!, j, year) ?? '', kind: kind === 'village' && names!.town[j] ? 'town' : (kind as NameEntry['kind']), language: namerOf[j], cell: names!.cell[j], given: names!.year[j] }
+  }
   const detailOf = new Map<string, number>()
   for (let k = 0; k < count; k++) {
     if (tree.level[k] === LANGUAGE_LEVEL.dialect) continue
@@ -143,8 +202,20 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
       const detail = k === undefined ? null : made.nodes[k]?.detail ?? null
       return detail ? { id, ...detail } : null
     },
-    // The names of places come with the villages' names (later).
-    names: () => ({ total: 0, rows: [] }),
+    names: (id, from, count, year = Infinity) => {
+      const list = (namesOf.get(id) ?? []).filter((j) => listed(j, year))
+      const at = Number.isFinite(year) ? year : history.end
+      return { total: list.length, rows: list.slice(from, from + count).map((j) => entry(j, at)) }
+    },
+    namesFound: (query, year) => {
+      const found = new Set<string>()
+      if (!names || !query) return found
+      for (let j = 0; j < names.kind.length; j++) {
+        if (found.has(namerOf[j]) || !listed(j, year)) continue
+        if ((nameAt(names, j, year) ?? '').toLowerCase().includes(query)) found.add(namerOf[j])
+      }
+      return found
+    },
     peopleName: (p) => made.peoples[p] || String(p + 1),
   }
 }

@@ -10,10 +10,12 @@ use casas_incubator::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
 use casas_incubator::history::{
     RainChart, carrying_of, origin_of, run_history, run_history_keeping,
 };
+use casas_incubator::languages::PeopleInput;
 use casas_incubator::log::LogEvent;
 use casas_incubator::pack::{pack_history, pack_settled};
 use casas_incubator::peoples::{TRAITS, peoples_of};
 use casas_incubator::peopling::{Controls, Peopling, people};
+use casas_incubator::place_names::names_of_places_json;
 use casas_incubator::settle::settle_history;
 use casas_incubator::simulation::{
     KEEP_YEARS, PEOPLE_FRAME_STEP, SPAN_YEARS, STEP_YEARS, ice_distance,
@@ -54,6 +56,47 @@ pub fn sea_drop_m() -> f64 {
 #[napi]
 pub fn language_sample(seed: u32) -> String {
     casas_incubator::language::sample(seed).to_string()
+}
+
+/// THE NAMES of places over a tree of peoples given as arrays, as the
+/// WASM build's `namesOfPlaces` (casas_incubator::place_names
+/// `names_of_places_json`): for the languages harness, which checks that
+/// both builds give the same names.
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn names_of_places(
+    parent: Int32Array,
+    group: Int32Array,
+    born: Float64Array,
+    ended: Float64Array,
+    merged_into: Int32Array,
+    big: Uint8Array,
+    share: Float64Array,
+    replaced: Uint8Array,
+    heart: Int32Array,
+    heart_apart: Int32Array,
+    seed: f64,
+    start: f64,
+    end: f64,
+    kinds: Uint8Array,
+    people: Int32Array,
+    years: Float64Array,
+) -> String {
+    let peoples: Vec<PeopleInput> = (0..parent.len())
+        .map(|p| PeopleInput {
+            parent: parent[p],
+            group: group[p],
+            born: born[p],
+            ended: ended[p],
+            merged_into: merged_into[p],
+            big: big[p] != 0,
+            share: share[p],
+            replaced: replaced[p] != 0,
+            heart: heart[p],
+            heart_apart: heart_apart[p],
+        })
+        .collect();
+    names_of_places_json(&peoples, seed, start, end, &kinds, &people, &years)
 }
 
 fn error(message: String) -> napi::Error {
