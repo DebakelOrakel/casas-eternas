@@ -100,6 +100,7 @@
   "incubator.chronicle.event.peopleSplit": "People {a} splits",
   "incubator.chronicle.peopleSplitDetail": "People {b} arises · {people} people · {area} km²",
   "incubator.chronicle.event.peopleMerged": "People {a} merges into people {b}",
+  "incubator.chronicle.event.peopleReplaced": "People {a} is displaced by people {b}",
   "incubator.chronicle.event.peopleGone": "People {a} vanishes",
   "incubator.chronicle.event.peopleFarmers": "People {a} turns to farming",
   "incubator.chronicle.peopleDetail": "{people} people · {area} km²",

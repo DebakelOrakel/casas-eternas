@@ -159,6 +159,17 @@ pub enum LogEvent {
         count: f64,
         km2: f64,
     },
+    /// People `people` ended as at a merge, but THE WAVES took most of it
+    /// (peoples.rs `Tree::tell`): it was displaced by `into`, the
+    /// newcomers' people. Its measure before. Since 2026-10-31 (TEG-14).
+    PeopleReplaced {
+        at: f64,
+        cell: f64,
+        people: f64,
+        into: f64,
+        count: f64,
+        km2: f64,
+    },
     /// People `people` died out or fell under big for good; its last big
     /// measure.
     PeopleGone {
@@ -203,6 +214,7 @@ impl LogEvent {
             | LogEvent::ColdSpell { at, .. }
             | LogEvent::PeopleSplit { at, .. }
             | LogEvent::PeopleMerged { at, .. }
+            | LogEvent::PeopleReplaced { at, .. }
             | LogEvent::PeopleGone { at, .. }
             | LogEvent::PeopleFarmers { at, .. } => *at,
         }
@@ -501,8 +513,24 @@ impl LogEvent {
                 into,
                 count,
                 km2,
+            }
+            | LogEvent::PeopleReplaced {
+                at,
+                cell,
+                people,
+                into,
+                count,
+                km2,
             } => {
-                kind(j, "peopleMerged");
+                let replaced = matches!(self, LogEvent::PeopleReplaced { .. });
+                kind(
+                    j,
+                    if replaced {
+                        "peopleReplaced"
+                    } else {
+                        "peopleMerged"
+                    },
+                );
                 j.key("at").number(*at).key("cell").number(*cell);
                 j.key("people")
                     .number(*people)

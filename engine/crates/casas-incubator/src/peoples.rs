@@ -40,18 +40,20 @@
 //!   the split: a people much stronger than a neighbour people (more
 //!   people a km², or an innovation the other lacks) moves into it, and
 //!   its traits take over the cells it reaches; a people taken whole
-//!   goes into the newcomers' people (`Tree`). People who move into a
-//!   lived cell (the famines, the rising sea) and are more than its
-//!   people carry their traits into it (`moved_in`).
+//!   goes into the newcomers' people (`Tree`), told as displaced by them
+//!   (`Tree::tell`). People who move into a lived cell (the famines, the
+//!   rising sea) and are more than its people carry their traits into it
+//!   (`moved_in`).
 //! - THE PEOPLES (`peoples_of`): the lived cells joined by neighbour edges
 //!   whose trait distance is under PEOPLE_DISTANCE, a union-find.
 //! - THE TREE (`Tree`): the peoples every CLIMATE_YEARS, with ids that
 //!   last, their splits and merges; the ids and the measures packed at the
 //!   kept states alone.
 //! - THE CHRONICLE (part 4, `Tree::tell`): the big peoples' splits,
-//!   merges, ends and turns to farming, into the history's log; a split
-//!   or a merge once it held TOLD_LIVES_YEARS by its hearts (THE HOLD,
-//!   v6), no split in step 2's first EARLY_SPLIT_YEARS.
+//!   merges, replacements, ends and turns to farming, into the history's
+//!   log; a split, a merge or a replacement once it held TOLD_LIVES_YEARS
+//!   by its hearts (THE HOLD, v6), no split in step 2's first
+//!   EARLY_SPLIT_YEARS.
 //!
 //! Measured on Morvane (v14), Thalassor and Zephyra (origin 783 702) on
 //! 2026-10-29 (v5, without the stripes), the peoples of 1 000 people and
@@ -1450,6 +1452,17 @@ impl Tree {
             }
             traits.taken_from[i] = -1;
         }
+        // A people displaced (`tell`): THE WAVES took more of its people
+        // since the last step than it holds still.
+        let mut kept = vec![0f64; self.peoples.len()];
+        let mut lost = vec![0f64; self.peoples.len()];
+        for &(p, _, w) in &overlap {
+            kept[p as usize] += w;
+        }
+        for &(p, _, w) in &taken {
+            lost[p as usize] += w;
+        }
+        let displaced: Vec<bool> = kept.iter().zip(&lost).map(|(k, l)| l > k).collect();
         let before = self.alive.clone();
         let old = self.peoples.len();
         let ids = match_overlap(
@@ -1545,7 +1558,7 @@ impl Tree {
             .iter()
             .map(|&q| if q < 0 { -1 } else { ids[q as usize] })
             .collect();
-        self.tell(&before, old, &ids, &now, &of_cell, t, log);
+        self.tell(&before, old, &ids, &now, &of_cell, &displaced, t, log);
         let mut out = Vec::new();
         for i in 0..n {
             if people[i] == 0 {
@@ -1577,6 +1590,12 @@ impl Tree {
     // - A merge: a people ended into another, told at the last step, which
     //   lived TOLD_LIVES_YEARS. Its measure then, at its heart then. Kept
     //   back as a split until it held TOLD_LIVES_YEARS.
+    // - A replacement (TEG-14, 2026-10-31): a merge of a people displaced
+    //   (`displaced`, by the last people's id): of its cells lived in at
+    //   the step it ended, by their people, THE WAVES took more since the
+    //   last step than it kept. Told as a merge, `into` the newcomers'
+    //   people. A people the waves took in parts over many steps, whose
+    //   last part joins another by the contact, merged.
     // - A people gone: one told at a step once, which lived
     //   TOLD_LIVES_YEARS, and which died out (none of its cells lived in)
     //   or is alive at the history's end but not big (`finish`); told at
@@ -1629,6 +1648,7 @@ impl Tree {
         ids: &[i32],
         now: &[Measure],
         of_cell: &[i32],
+        displaced: &[bool],
         t: f64,
         log: &mut Vec<LogEvent>,
     ) {
@@ -1728,15 +1748,29 @@ impl Tree {
                 }
                 if into >= 0 {
                     if told(&w.last, self.last_lived) {
+                        let (at, cell, people) = (t, w.last.centre as f64, p as f64);
+                        let (into, count, km2) = (into as f64, w.last.people, w.last.km2);
+                        let event = if displaced[p] {
+                            LogEvent::PeopleReplaced {
+                                at,
+                                cell,
+                                people,
+                                into,
+                                count,
+                                km2,
+                            }
+                        } else {
+                            LogEvent::PeopleMerged {
+                                at,
+                                cell,
+                                people,
+                                into,
+                                count,
+                                km2,
+                            }
+                        };
                         self.held.push(Held {
-                            event: LogEvent::PeopleMerged {
-                                at: t,
-                                cell: w.last.centre as f64,
-                                people: p as f64,
-                                into: into as f64,
-                                count: w.last.people,
-                                km2: w.last.km2,
-                            },
+                            event,
                             since: t,
                             a: w.last.centre,
                             b: other,
@@ -2226,6 +2260,71 @@ mod tests {
                 ("merged", 11_000.0, 3.0, 2.0, 0.0),
             ]
         );
+    }
+
+    // Two peoples of three cells each (as above); at 6 000 people 1's
+    // cells grow alike with people 0's, `waved` of them taken by THE
+    // WAVES (their traits and id people 0's). The end of people 1 is told
+    // as a replacement where the waves took most of its cells, else as a
+    // merge.
+    fn ended_by(waved: usize) -> Vec<LogEvent> {
+        let h = row(6, 10_000.0);
+        let mut traits = traits_of(&[0.0, 0.0, 0.0, 0.5, 0.5, 0.5]);
+        let people = vec![1000u16; 6];
+        let mut tree = Tree::new();
+        let mut log = Vec::new();
+        for t in [0.0, 6000.0, 12_000.0] {
+            if t == 6000.0 {
+                for i in 3..6 {
+                    set(&mut traits, i, 0.0);
+                    if i < 3 + waved {
+                        traits.ident[i] = 0;
+                        traits.taken_from[i] = 1;
+                    }
+                }
+            }
+            tree.frame(
+                &h,
+                &mut traits,
+                &people,
+                &[0; 6],
+                &[0; 6],
+                t,
+                false,
+                &mut log,
+            );
+        }
+        assert_eq!(tree.peoples[1].merged_into, 0);
+        log.retain(|e| {
+            matches!(
+                e,
+                LogEvent::PeopleMerged { .. } | LogEvent::PeopleReplaced { .. }
+            )
+        });
+        log
+    }
+
+    #[test]
+    fn a_people_the_waves_took_is_told_replaced() {
+        for (waved, replaced) in [(3, true), (2, true), (1, false), (0, false)] {
+            let log = ended_by(waved);
+            assert_eq!(log.len(), 1, "{waved} taken");
+            match log[0] {
+                LogEvent::PeopleReplaced {
+                    at, people, into, ..
+                } => {
+                    assert!(replaced, "{waved} taken");
+                    assert_eq!((at, people, into), (6000.0, 1.0, 0.0));
+                }
+                LogEvent::PeopleMerged {
+                    at, people, into, ..
+                } => {
+                    assert!(!replaced, "{waved} taken");
+                    assert_eq!((at, people, into), (6000.0, 1.0, 0.0));
+                }
+                _ => unreachable!(),
+            }
+        }
     }
 
     // One people of six cells; cells 4 and 5 part and join again: in

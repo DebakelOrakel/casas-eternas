@@ -718,7 +718,10 @@ Building since 2026-10-27:
   7 000 years); the big peoples at the end 170, 180, 156 → 180, 176,
   141, the largest at most 7.0 %; the stripes (border over three times a
   disc's) at the end 14, 8, 12 → 20, 13, 15 (most at 3.0 to 3.6). Told
-  on Zephyra 11 splits, 4 merges → 31, 13. Step 2's times the same (the
+  on Zephyra 11 splits, 4 merges → 31, 13. A people the waves took most
+  of (by its people, at the step it ended) is told as displaced by the
+  newcomers (`peopleReplaced`), not as merged: on Zephyra 14 of the 15
+  merges told. Step 2's times the same (the
   traits feed back into nothing). A fission of large old branches (C)
   was tried and not built: the daughters give the later splits.
 

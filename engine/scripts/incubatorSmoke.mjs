@@ -324,7 +324,7 @@ for (const kind of ['torus', 'sphere']) {
     }
   }
   const count = (k) => history.log.filter((e) => e.kind === k).length
-  console.log(`incubator: ${kind} — ${rs.count()} cells, ${landCount} on land, ${landmasses} landmasses; ${count('crossing')} crossings, ${count('centre')} centres (${history.log.filter((e) => e.kind === 'centre' && e.lifeway === 3).length} herding), ${count('village')} villages, ${count('camp')} camps, ${count('famine')} famines, ${count('extinct')} extinctions, ${tree.parent.length} peoples (${alive} big ones alive at the end, ${count('peopleSplit')} splits and ${count('peopleMerged')} merges told) (cells ${Math.round(cellsMs)} ms, flora and fauna ${Math.round(growMs)} ms, history ${Math.round(runMs)} ms, settlement ${Math.round(settleMs)} ms)`)
+  console.log(`incubator: ${kind} — ${rs.count()} cells, ${landCount} on land, ${landmasses} landmasses; ${count('crossing')} crossings, ${count('centre')} centres (${history.log.filter((e) => e.kind === 'centre' && e.lifeway === 3).length} herding), ${count('village')} villages, ${count('camp')} camps, ${count('famine')} famines, ${count('extinct')} extinctions, ${tree.parent.length} peoples (${alive} big ones alive at the end, ${count('peopleSplit')} splits and ${count('peopleMerged')} merges and ${count('peopleReplaced')} replacements told) (cells ${Math.round(cellsMs)} ms, flora and fauna ${Math.round(growMs)} ms, history ${Math.round(runMs)} ms, settlement ${Math.round(settleMs)} ms)`)
   // The native build on the same world.
   t0 = performance.now()
   const nat = wasmCells(world.cells, native)
@@ -384,10 +384,13 @@ for (const kind of ['torus', 'sphere']) {
 // torus reached a herding centre ('centre 3'); the sphere's seed 29 told
 // one of each and reached a herding centre, so the three were in again
 // (2026-10-30, TEG-99); seed 5 since the dry shelf's ecology (TEG-13), seed 4
-// since the post-glacial rebound (TEG-22). Also in peoples.rs
-// `a_split_is_told_once_it_held` and
-// `the_tree_keeps_ids_and_records_splits_and_merges`.
-const reaches = ['departure', 'trade', 'crossing', 'centre 3', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleSplit', 'peopleMerged', 'peopleGone', 'peopleFarmers', 'goods']
+// since the post-glacial rebound (TEG-22). Seed 4 also tells a people
+// THE WAVES took as replaced (TEG-14, 2026-10-31: 2 merges and 1
+// replacement, 3 merges before). Also in peoples.rs
+// `a_split_is_told_once_it_held`,
+// `the_tree_keeps_ids_and_records_splits_and_merges` and
+// `a_people_the_waves_took_is_told_replaced`.
+const reaches = ['departure', 'trade', 'crossing', 'centre 3', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleSplit', 'peopleMerged', 'peopleReplaced', 'peopleGone', 'peopleFarmers', 'goods']
 for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
 if (!golden && !failed) {
   await writeFile(GOLDEN, JSON.stringify(hashes, null, 2) + '\n')

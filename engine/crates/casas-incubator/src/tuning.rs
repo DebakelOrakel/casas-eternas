@@ -58,7 +58,10 @@ use serde_json::{Map, Value, json};
 /// (simulation.rs THE REBOUND'S COASTS, `SeaFloodsIce` and `LandRises`,
 /// TEG-22, 2026-10-31); the peoples' waves, and movers who
 /// carry their traits into a lived cell (peoples.rs THE WAVES, TEG-14,
-/// 2026-10-31), the other arrays and events the same bytes.
+/// 2026-10-31), the other arrays and events the same bytes; a people the
+/// waves took most of told as replaced, not merged (peoples.rs
+/// `Tree::tell`, `PeopleReplaced`, TEG-14, 2026-10-31), a new kind of the
+/// log, the arrays the same bytes.
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.

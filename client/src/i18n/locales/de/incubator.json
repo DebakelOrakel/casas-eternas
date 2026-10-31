@@ -100,6 +100,7 @@
   "incubator.chronicle.event.peopleSplit": "Volk {a} spaltet sich",
   "incubator.chronicle.peopleSplitDetail": "Volk {b} entsteht · {people} Menschen · {area} km²",
   "incubator.chronicle.event.peopleMerged": "Volk {a} geht in Volk {b} auf",
+  "incubator.chronicle.event.peopleReplaced": "Volk {a} wird von Volk {b} verdrängt",
   "incubator.chronicle.event.peopleGone": "Volk {a} verschwindet",
   "incubator.chronicle.event.peopleFarmers": "Volk {a} wird ein Bauernvolk",
   "incubator.chronicle.peopleDetail": "{people} Menschen · {area} km²",

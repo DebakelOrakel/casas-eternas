@@ -60,6 +60,10 @@ export type LogEvent =
   | { kind: 'peopleSplit'; at: number; cell: number; people: number; new: number; count: number; km2: number }
   // People `people` went into `into` (its measure before).
   | { kind: 'peopleMerged'; at: number; cell: number; people: number; into: number; count: number; km2: number }
+  // People `people` ended as at a merge, but THE WAVES took most of it: it
+  // was displaced by `into`, the newcomers' people (its measure before).
+  // Since 2026-10-31; an older reader passes over it.
+  | { kind: 'peopleReplaced'; at: number; cell: number; people: number; into: number; count: number; km2: number }
   // People `people` died out or fell under big for good (its last big
   // measure).
   | { kind: 'peopleGone'; at: number; cell: number; people: number; count: number; km2: number }

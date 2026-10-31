@@ -1075,7 +1075,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             title: t('incubator.chronicle.event.coldSpell'),
             detail: t('incubator.chronicle.coldSpellDetail', { years: Math.round(e.years).toLocaleString(getLocale()) }),
           })
-        } else if (e.kind === 'peopleSplit' || e.kind === 'peopleMerged' || e.kind === 'peopleGone' || e.kind === 'peopleFarmers') {
+        } else if (e.kind === 'peopleSplit' || e.kind === 'peopleMerged' || e.kind === 'peopleReplaced' || e.kind === 'peopleGone' || e.kind === 'peopleFarmers') {
           // The peoples by their ids from 1, as the overlay's probe.
           const a = String(e.people + 1)
           const measure = { people: Math.round(e.count).toLocaleString(getLocale()), area: Math.round(e.km2).toLocaleString(getLocale()) }
@@ -1087,6 +1087,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             title:
               e.kind === 'peopleSplit' ? t('incubator.chronicle.event.peopleSplit', { a })
               : e.kind === 'peopleMerged' ? t('incubator.chronicle.event.peopleMerged', { a, b: String(e.into + 1) })
+              : e.kind === 'peopleReplaced' ? t('incubator.chronicle.event.peopleReplaced', { a, b: String(e.into + 1) })
               : e.kind === 'peopleGone' ? t('incubator.chronicle.event.peopleGone', { a })
               : t('incubator.chronicle.event.peopleFarmers', { a }),
             detail: e.kind === 'peopleSplit' ? t('incubator.chronicle.peopleSplitDetail', { b: String(e.new + 1), ...measure }) : t('incubator.chronicle.peopleDetail', measure),
