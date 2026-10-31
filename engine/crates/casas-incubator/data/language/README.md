@@ -64,6 +64,9 @@ The steps to draw an inventory:
 7. Draw a `stress` rule.
 
 A feature class (`[stop +voice]`) uses the notation of `changes.json`.
+`-value` excludes a value (`[palatal -approximant]`). The `needs` of an
+implication is its `then` for a program: a list of choices, each a sound
+id or a feature replacement on the drawn sound (`[-voice]`).
 
 ### syllables.json
 
@@ -84,6 +87,9 @@ A feature class (`[stop +voice]`) uses the notation of `changes.json`.
   sets `{a,b}`, feature classes `[stop -voice]`, class letters (`C`, `V`,
   `N` …), `_` for the target, `#` for a word edge, `∅` for nothing,
   `α` for a shared value. It is close to SCA² (Zompist) and Lexurgy.
+  A class letter in a feature class restricts it (`[O +voice]`). A set
+  in REPLACEMENT with no set of its size in TARGET (`∅ > {u,e}`) is a
+  choice: a language that takes the change uses one member.
 - `families[]`: `id`, `text` (one sentence), `source` (keys of `sources`).
 - `changes[]`: `id` (camelCase, stable), `family`, `rule`, optional
   `requires` (what the inventory must have), `weight`, `text` (one

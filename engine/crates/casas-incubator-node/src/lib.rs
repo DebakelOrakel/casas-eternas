@@ -49,6 +49,13 @@ pub fn sea_drop_m() -> f64 {
     SEA_DROP_M
 }
 
+/// A debug view of the proto-language of a seed, as JSON
+/// (`casas_incubator::language::sample`). Not a format: it can change.
+#[napi]
+pub fn language_sample(seed: u32) -> String {
+    casas_incubator::language::sample(seed).to_string()
+}
+
 fn error(message: String) -> napi::Error {
     napi::Error::from_reason(message)
 }

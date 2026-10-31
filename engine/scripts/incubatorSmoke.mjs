@@ -400,6 +400,14 @@ for (const kind of ['torus', 'sphere']) {
 // `a_people_the_waves_took_is_told_replaced`.
 const reaches = ['departure', 'trade', 'crossing', 'centre 3', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleSplit', 'peopleMerged', 'peopleReplaced', 'peopleGone', 'peopleFarmers', 'goods']
 for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
+// The languages (language/mod.rs, TEG-137): no world, no reference yet —
+// the crate's own tests keep a fixed seed's names. The native build must
+// give the WASM's language for each seed.
+const LANGUAGE_SEEDS = 64
+for (let seed = 0; seed < LANGUAGE_SEEDS; seed++) {
+  if (native.languageSample(seed) !== wasm.languageSample(seed)) fail(`language: seed ${seed} — the native build differs from the WASM's`)
+}
+console.log(`incubator: ${LANGUAGE_SEEDS} languages, native as WASM`)
 if (!golden && !failed) {
   await writeFile(GOLDEN, JSON.stringify(hashes, null, 2) + '\n')
   console.log('incubator: recorded the reference')

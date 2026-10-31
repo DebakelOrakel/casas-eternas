@@ -44,6 +44,14 @@ pub fn sea_drop_m() -> f64 {
     SEA_DROP_M
 }
 
+/// A debug view of the proto-language of a seed, as JSON
+/// (`casas_incubator::language::sample`): its sounds, syllables, grammar,
+/// ten core words and some names. Not a format: it can change.
+#[wasm_bindgen(js_name = languageSample)]
+pub fn language_sample(seed: u32) -> String {
+    casas_incubator::language::sample(seed).to_string()
+}
+
 // Step 1's controls, each its default where not given.
 fn controls_of(reach_km: Option<f64>, sea_low_m: Option<f64>) -> Controls {
     let d = Controls::default();

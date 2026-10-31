@@ -14,6 +14,7 @@ pub mod eruptions;
 pub mod flora;
 pub mod habitat;
 pub mod history;
+pub mod language;
 pub mod log;
 pub mod niche;
 pub mod pack;

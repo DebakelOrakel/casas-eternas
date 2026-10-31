@@ -165,5 +165,10 @@ decide.
 syllables, the spellings, the meanings, the patterns and the sound
 changes. The read-only languages window is built (6b8c5216,
 `client/src/ui/languagePanel/`): it shows the tree of the peoples'
-languages, made by a stub engine. The forks above are still open
-(TEG-135).
+languages, made by a stub engine. The forks above are decided in
+DEC-0054 (TEG-135, the same day).
+2026-10-31: the language core is built (TEG-137,
+`engine/crates/casas-incubator/src/language/`): a proto-language from a
+seed (sounds, syllables, stress, lexicon, grammar of names, spelling),
+the name as a recipe, and one sound change applied to a word. The tree
+of the languages and the window's wiring are not built.

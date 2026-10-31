@@ -19,6 +19,7 @@
     "zero": "∅: nothing. '∅ > e' inserts, 'e > ∅' deletes.",
     "environment": "_ is the place of TARGET. Class letters may stand together without spaces (VC_#). # a word edge, $ a syllable edge, … any material in the same word, (X) X or nothing, C₀ zero or more consonants.",
     "exception": "'// ENV' after the environment: the change does not apply there.",
+    "choice": "A set in REPLACEMENT with no set of the same size at its place in TARGET ('∅ > {u,e}'): a language that takes the change uses one member, chosen once.",
     "classes": {
       "C": "[C]", "V": "[V]", "P": "[stop]", "A": "[affricate]", "F": "[fricative]", "N": "[nasal]",
       "L": "{l,ʎ,ɾ,r,ɹ}", "R": "{ɾ,r,ɹ}", "G": "{j,w}", "O": "[stop],[affricate],[fricative]", "S": "[nasal],L,G"
@@ -47,9 +48,9 @@
   "changes": [
     { "id": "voicingIntervocalic", "family": "lenition", "rule": "[stop -voice -aspirated -ejective] > [+voice] / V_V", "requires": ["[stop +voice]"], "weight": 3,
       "text": "A voiceless stop between two vowels becomes voiced.", "attested": "Latin to Spanish", "example": ["Latin", "lupum", "Spanish", "lobo"] },
-    { "id": "spirantizationIntervocalic", "family": "lenition", "rule": "[stop +voice] > [fricative] / V_V", "weight": 2,
+    { "id": "spirantizationIntervocalic", "family": "lenition", "rule": "{b,d,g} > {β,ð,ɣ} / V_V", "weight": 2,
       "text": "A voiced stop between two vowels becomes a fricative.", "attested": "Latin to Spanish", "example": ["Latin", "latus", "Spanish", "lado [ˈlaðo]"] },
-    { "id": "grimmSpirantization", "family": "lenition", "rule": "[stop -voice -aspirated -ejective] > [fricative] // s_", "requires": ["F"], "weight": 1,
+    { "id": "grimmSpirantization", "family": "lenition", "rule": "{p,t,k} > {f,θ,x} // s_", "requires": ["F"], "weight": 1,
       "text": "A voiceless stop becomes a fricative, except after s.", "attested": "Proto-Indo-European to Proto-Germanic", "example": ["Proto-Indo-European", "*pṓds", "Proto-Germanic", "*fōts"] },
     { "id": "degemination", "family": "lenition", "rule": "C₁ C₁ > C₁ ∅", "weight": 2,
       "text": "Two equal consonants next to each other become one consonant.", "attested": "Latin to Spanish", "example": ["Latin", "gutta", "Spanish", "gota"] },
@@ -121,7 +122,7 @@
       "text": "The sound b becomes v.", "attested": "Ancient Greek to Modern Greek", "example": ["Ancient Greek", "basileús", "Modern Greek", "[vasiˈlefs]"] },
     { "id": "wToV", "family": "fortition", "rule": "w > v / _V", "requires": ["v"], "weight": 1.5,
       "text": "A w before a vowel becomes v.", "attested": "Latin to Italian", "example": ["Latin", "vīnum [ˈwiːnum]", "Italian", "vino [ˈvino]"] },
-    { "id": "wToGw", "family": "fortition", "rule": "w > g w / #_", "weight": 0.5,
+    { "id": "wToGw", "family": "fortition", "rule": "∅ > g / #_w", "weight": 0.5,
       "text": "A w at the start of a word gets a g before it.", "attested": "Frankish to Old French", "example": ["Frankish", "*werra", "Old French", "guerre [ˈgwɛrrə]"] },
     { "id": "jToDj", "family": "fortition", "rule": "j > dʒ / #_", "weight": 1,
       "text": "A y (j) at the start of a word becomes j (dʒ).", "attested": "Latin to Italian", "example": ["Latin", "iocus [ˈjokus]", "Italian", "gioco [ˈdʒɔko]"] },

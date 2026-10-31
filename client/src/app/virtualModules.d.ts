@@ -82,6 +82,8 @@ declare module 'casas-incubator-wasm/casas-incubator.js' {
   export function coldCurve(seed: number): Float32Array
   export function iceReachKm(): number
   export function seaDropM(): number
+  // A debug view of a seed's proto-language, as JSON (language/mod.rs `sample`).
+  export function languageSample(seed: number): string
   export class Incubator {
     constructor(sphere: boolean, spacingKm: number, width: number, height: number, nodes: Int32Array, nodeW: number, nodeH: number, land: Uint8Array, biome: Uint8Array, koppen: Uint8Array, z: Float32Array, lakeDepth: Float32Array, ecology: Uint8Array, ecologyPresent: number, riverPoints?: Float32Array, riverLengths?: Uint32Array, riverRegimes?: Uint8Array, shelfCarrying?: Uint8Array, volcanoes?: Float64Array)
     free(): void
