@@ -1037,11 +1037,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const names = peoples?.languages.names ?? null
     const landmassNames = new Map<number, number>()
     if (names) for (let j = 0; j < names.kind.length; j++) if (NAME_KINDS[names.kind[j]] === 'landmass') landmassNames.set(names.place[j], j)
-    const landmassName = (m: number, at: number): string => {
+    const madeName = (m: number, at: number): string | null => {
       const j = landmassNames.get(m)
-      const name = names && j !== undefined ? nameAt(names, j, at) : null
-      return name ?? t('incubator.chronicle.landmass', { n: String(cellFacts ? cellFacts.rank[m] : m + 1) })
+      return names && j !== undefined ? nameAt(names, j, at) : null
     }
+    const landmassName = (m: number, at: number): string => madeName(m, at) ?? t('incubator.chronicle.landmass', { n: String(cellFacts ? cellFacts.rank[m] : m + 1) })
     // The log (historyLogShared.ts), the history's: what it tells of each
     // kind.
     const log = logShown()
@@ -1196,11 +1196,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           }, e.cell)
         } else if (e.kind === 'crossing') {
           if (!toldCrossing(e, spreadShown()?.people.origin ?? -1)) continue
+          const landmass = madeName(e.landmass, e.at)
           place({
             time: e.at,
             icon: '/icons/boat.png',
             rgb: BOAT_RGB,
-            title: t('incubator.chronicle.event.crossing', { n: String(facts.rank[e.landmass]) }),
+            title: landmass !== null ? t('incubator.chronicle.event.crossingNamed', { landmass }) : t('incubator.chronicle.event.crossing', { n: String(facts.rank[e.landmass]) }),
             detail: t('incubator.chronicle.crossingDetail', { area: Math.round(facts.landmassKm2[e.landmass]).toLocaleString(getLocale()), km: Math.round(e.km).toLocaleString(getLocale()) }),
           }, e.cell)
         } else if (e.kind === 'village') {

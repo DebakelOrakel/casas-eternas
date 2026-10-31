@@ -69,6 +69,7 @@
   "incubator.chronicle.event.farmCentre": "Farming centre arises",
   "incubator.chronicle.event.herdCentre": "Herding centre arises",
   "incubator.chronicle.event.crossing": "Crossing to landmass {n}",
+  "incubator.chronicle.event.crossingNamed": "Crossing to {landmass}",
   "incubator.chronicle.event.extinct": "{animal} dies out",
   "incubator.chronicle.event.domesticated": "{name} domesticated",
   "incubator.chronicle.event.copper": "Copper hammered",

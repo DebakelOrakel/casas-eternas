@@ -354,13 +354,13 @@ for (const seed of [1, 7, 2840]) {
   }
   const log = [...made.log, ...events].sort((p, q) => p.at - q.at)
   const view = M.view.deriveLanguageView({ ...made, log, languages: { ...languages, names } })
-  const listed = a.nameKind.filter((k) => KINDS[k] !== 'landmass').length
+  const listed = a.nameKind.length
   const families = view.nodes.filter((n) => n.level === 'family')
   const total = families.reduce((s, f) => s + view.names(f.id, 0, 0).total, 0)
-  check(`seed ${seed}: the families list every name but the landmasses' (${total} of ${listed})`, total === listed)
+  check(`seed ${seed}: the families list every name, the landmasses' too (${total} of ${listed})`, total === listed)
   const mid = (made.start + made.end) / 2
   const byMid = families.reduce((s, f) => s + view.names(f.id, 0, 0, mid).total, 0)
-  check(`seed ${seed}: by a year, the names given by then (${byMid})`, byMid === a.nameYear.filter((y, j) => y <= mid && KINDS[a.nameKind[j]] !== 'landmass').length)
+  check(`seed ${seed}: by a year, the names given by then (${byMid})`, byMid === a.nameYear.filter((y, j) => y <= mid).length)
   const row = view.names(families[0].id, 0, 1)
   const word = row.rows[0]?.name.toLowerCase().slice(0, 4) ?? ''
   check(`seed ${seed}: the search finds a name's node ("${word}")`, word !== '' && view.namesFound(word, made.end).has(row.rows[0].language))

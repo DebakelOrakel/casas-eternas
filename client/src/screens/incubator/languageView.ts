@@ -182,12 +182,11 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
       }
     }
   }
-  // The names a panel lists: not the landmasses' (their kind has no
-  // catalog key yet).
-  const listed = (j: number, year: number): boolean => names !== null && NAME_KINDS[names.kind[j]] !== 'landmass' && names.year[j] <= year
+  // The names a panel lists: those given by `year`.
+  const listed = (j: number, year: number): boolean => names !== null && names.year[j] <= year
   const entry = (j: number, year: number): NameEntry => {
     const kind = NAME_KINDS[names!.kind[j]]
-    return { name: nameAt(names!, j, year) ?? '', kind: kind === 'village' && names!.town[j] ? 'town' : (kind as NameEntry['kind']), language: namerOf[j], cell: names!.cell[j], given: names!.year[j] }
+    return { name: nameAt(names!, j, year) ?? '', kind: kind === 'village' && names!.town[j] ? 'town' : kind, language: namerOf[j], cell: names!.cell[j], given: names!.year[j] }
   }
   const detailOf = new Map<string, number>()
   for (let k = 0; k < count; k++) {

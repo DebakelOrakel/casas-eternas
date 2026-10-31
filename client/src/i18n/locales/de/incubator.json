@@ -69,6 +69,7 @@
   "incubator.chronicle.event.farmCentre": "Ackerbau-Zentrum entstanden",
   "incubator.chronicle.event.herdCentre": "Viehzucht-Zentrum entstanden",
   "incubator.chronicle.event.crossing": "Überfahrt nach Landmasse {n}",
+  "incubator.chronicle.event.crossingNamed": "Überfahrt nach {landmass}",
   "incubator.chronicle.event.extinct": "{animal} ausgestorben",
   "incubator.chronicle.event.domesticated": "{name} domestiziert",
   "incubator.chronicle.event.copper": "Kupfer gehämmert",

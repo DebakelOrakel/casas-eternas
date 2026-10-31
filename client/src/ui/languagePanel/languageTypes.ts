@@ -58,7 +58,7 @@ export interface NamePattern {
   samples: readonly { name: string; meanings: readonly string[] }[]
 }
 
-export type PlaceKind = 'village' | 'town' | 'river' | 'mountain' | 'lake'
+export type PlaceKind = 'village' | 'town' | 'river' | 'mountain' | 'lake' | 'landmass'
 
 export interface NameEntry {
   name: string
