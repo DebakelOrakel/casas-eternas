@@ -8,7 +8,9 @@
 //! INCUBATOR_ALGO_VERSION by hand. `make engine` writes both to
 //! `dist/incubator/` (constants.json, version.json).
 
-use crate::{climate_history, habitat, log, niche, peoples, peopling, settle, simulation, travel};
+use crate::{
+    climate_history, eruptions, habitat, log, niche, peoples, peopling, settle, simulation, travel,
+};
 use serde_json::{Map, Value, json};
 
 /// Raised by hand on a change to the code that changes what a run gives,
@@ -61,7 +63,12 @@ use serde_json::{Map, Value, json};
 /// 2026-10-31), the other arrays and events the same bytes; a people the
 /// waves took most of told as replaced, not merged (peoples.rs
 /// `Tree::tell`, `PeopleReplaced`, TEG-14, 2026-10-31), a new kind of the
-/// log, the arrays the same bytes.
+/// log, the arrays the same bytes;
+/// the large eruptions (eruptions.rs,
+/// simulation.rs THE ERUPTIONS, TEG-131, 2026-10-31) from level 1's
+/// volcanoes, their events in the log (a reader that does not know the
+/// new kinds passes over them): a world without volcanoes gives the same
+/// bytes.
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
@@ -80,8 +87,9 @@ fn object(pairs: Vec<(&str, f64)>) -> Value {
     )
 }
 
-/// The tuning by module, and the catalog: `{ climate, habitat, niche,
-/// travel, peopling, simulation, peoples, settle, log, catalog }`.
+/// The tuning by module, and the catalog: `{ climate, eruptions,
+/// habitat, niche, travel, peopling, simulation, peoples, settle, log,
+/// catalog }`.
 pub fn constants() -> Value {
     let catalog: Value =
         serde_json::from_str(include_str!("../data/catalog.json")).expect("data/catalog.json");
@@ -102,6 +110,12 @@ pub fn constants() -> Value {
             DRYING_LAT_FROM, DRYING_LAT_TO, DRYING_FROM, DRYING_TO, DRYING_LAG_YEARS, DRYING_FAST_YEARS, DRYING_SLOW_YEARS,
             HUMID_DESERT_CARRYING, HUMID_DESERT_PASTURE, HUMID_STEPPE_CARRYING, HUMID_STEPPE_PASTURE,
             ICE_PROFILE_M, ICE_SINK, REBOUND_YEARS)),
+        "eruptions": object(table!(eruptions:
+            EARTH_VEI6_YEARS, EARTH_VEI7_YEARS, EARTH_VEI8_YEARS, EARTH_EXPLOSIVE, EARTH_FISSURE_YEARS, EARTH_EFFUSIVE,
+            ASH_LOSS, ASH_KM_VEI6, ASH_KM_VEI7, ASH_KM_VEI8, ASH_YEARS_VEI6, ASH_YEARS_VEI7, ASH_YEARS_VEI8,
+            COLD_VEI7, COLD_YEARS_VEI7, COLD_VEI8, COLD_YEARS_VEI8, FISSURE_KM, FISSURE_LOSS, FISSURE_YEARS,
+            ERUPTION_TOLD_PEOPLE, FISSURE_TOLD_SHARE,
+        )),
         "habitat": object(table!(habitat: CELL_SPACING_KM)),
         "niche": object(table!(niche: SUITABLE, BARRIER, SPREAD_KM, ORIGIN_AREA_KM2, OFF_COVER, BIG_RIVER)),
         "travel": object(table!(travel: WALK_HOURS, RIVER_BOAT_SIZE, RIVER_DOWN_KM_DAY, RIVER_UP_KM_DAY, COAST_DEPTH_M, COAST_KM_DAY, LANDING_DAYS)),
@@ -239,6 +253,7 @@ mod tests {
     fn every_constant_is_tuning_or_format() {
         let sources = [
             ("climate", include_str!("climate_history.rs")),
+            ("eruptions", include_str!("eruptions.rs")),
             ("habitat", include_str!("habitat.rs")),
             ("niche", include_str!("niche.rs")),
             ("travel", include_str!("travel.rs")),

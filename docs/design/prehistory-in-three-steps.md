@@ -724,6 +724,25 @@ Building since 2026-10-27:
   merges told. Step 2's times the same (the
   traits feed back into nothing). A fission of large old branches (C)
   was tried and not built: the daughters give the later splits.
+- 2026-10-31 (v6 still): the large eruptions (`casas-incubator`
+  eruptions.rs, simulation.rs THE ERUPTIONS; TEG-131). From level 1's
+  active volcanoes, drawn from the seed: VEI 6 to 8 at the earth's rates
+  times the world's explosive volcanoes over the earth's, and fissures as
+  Laki. Ash (a fissure's gas) takes what the land carries near the vent
+  for some years; the people over it die or flee as in a famine (THE
+  FLIGHT). VEI 7 and 8 also cool the world as a cold spell. The
+  chronicle tells a VEI 7 or 8 always, a VEI 6 or a fissure that kills
+  or drives away 500 people or more (a fissure also 20 % of the people in
+  its reach). Measured on the v15 worlds' level 1, made again with the
+  volcanoes' activity, the own origin, with the rain: Morvane 21 VEI 6
+  (4 hit people, 416 dead or fled at most, none told) and a
+  fissure (72 800 km², 718 dead, 542 fled, told); Thalassor 19 VEI 6 and
+  2 VEI 7 (one over 112 000 km² of a landmass no people reached), no
+  one dead; Zephyra 20 VEI 6 and 2 VEI 7, no one dead. On Zephyra most island
+  arcs stand in the sea, half of them 140 km or more from land. The times
+  stay the same but Morvane's city, at +5 000 (+4 500); the people at
+  the end +3.9 % (500 years more), +0.03 %, +0.08 %. A level 1 without the volcanoes'
+  activity (made before 2026-10-30) gives no eruption and the same bits.
 
 Open:
 
@@ -769,9 +788,7 @@ Open:
    land's best share reaches FARM_ARABLE, not its mean, so that the fields
    reach a desert's floodplain; the carrying capacity keeps the mean.
    With TEG-10.
-9. The large eruptions (incubator v6, TEG-21): an eruption as Toba or
-   Santorini, an event in step 2's chronicle, with ash, cold years and
-   people who leave. Level 1 holds what it reads since 2026-10-30: per
+9. Done 2026-10-31: the large eruptions (incubator v6, TEG-21,
+   TEG-131; Status). Level 1 holds what they read since 2026-10-30: per
    volcano its place, size, kind, crust and whether it is active
-   ([DEC-0051](../decisions/volcanic-islands.md), Status, with the
-   explosivity rule proposed from the earth's VEI scale). Not built.
+   ([DEC-0051](../decisions/volcanic-islands.md), Status).

@@ -10,6 +10,7 @@ The incubator's controls and layout are in [ui.md](./ui.md).
 - **changed** Old Stone Age: without a chosen origin, the people start on the large landmass from which they reach the most land. `incubator.step.oldStoneAge`
 - **changed** New Stone Age: the land the ice sheets pushed down lies under the sea when the ice melts and rises out of it over thousands of years. `incubator.step.newStoneAge`
 - **new** Chronicle: the map shows the land the ice pushed down as sea while it is under the sea, and the chronicle tells where the sea floods it and where it rises again. `incubator.chronicle.event.seaFloodsIce`
+- **new** New Stone Age: large volcanic eruptions cover the land near them with ash or gas, cool the world, and the chronicle tells them. `incubator.chronicle.event.eruption`
 
 ## 2026-10-30
 - **changed** Old Stone Age: a shelf the low sea lays dry feeds the people as its own land would, not as the coast beside it. `incubator.step.oldStoneAge`

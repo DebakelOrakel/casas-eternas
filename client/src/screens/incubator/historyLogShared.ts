@@ -53,6 +53,12 @@ export type LogEvent =
   | { kind: 'seaFloodsIce' | 'landRises'; at: number; cell: number; landmass: number; km2: number }
   // A cold spell begins (climate_history.rs THE COLD SPELLS), `years` long.
   | { kind: 'coldSpell'; at: number; years: number }
+  // A large explosive eruption of VEI `vei` (eruptions.rs, simulation.rs
+  // THE ERUPTIONS) at the vent's cell, on the landmass nearest it: its ash
+  // over `km2` of the land, `people` dead, `left` fled.
+  | { kind: 'eruption'; at: number; cell: number; landmass: number; vei: number; km2: number; people: number; left: number }
+  // A fissure eruption: its gas over `km2` of the land, as `eruption`.
+  | { kind: 'fissure'; at: number; cell: number; landmass: number; km2: number; people: number; left: number }
   // THE PEOPLES' CHRONICLE (peoples.rs Tree::tell, 2026-10-29), of the big
   // peoples: `people` a people's id (historyPack.ts PeoplesTree, from 0;
   // the player sees it from 1), `count` its people, `km2` its area, `cell`

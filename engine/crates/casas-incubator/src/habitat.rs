@@ -91,6 +91,25 @@ pub struct CellInput<'a> {
     /// The rivers in the world raster's texels: [x, y, width] a point, the
     /// points a river, each river's regime.
     pub rivers: Option<(&'a [f32], &'a [u32], &'a [u8])>,
+    /// Level 1's volcanoes (`volcanoes.f64`, TEG-21) in the world raster's
+    /// texels: [x, y, thickness, kind, continental, active] a volcano; None
+    /// for a level without them. A list in another form (level 1 before
+    /// 2026-10-30 held four numbers a volcano) gives no volcano
+    /// (`volcanoes_of`).
+    pub volcanoes: Option<&'a [f64]>,
+}
+
+/// A volcano of level 1 (TEG-21, the generator's `VolcanoSetting`): the
+/// cell nearest it; its thickness, which is its size; its kind (0
+/// hotspot, 1 flood basalt, 2 active arc, 3 extinct arc); its crust; and
+/// whether it is active. The eruptions read it (eruptions.rs).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Volcano {
+    pub cell: usize,
+    pub thickness: f64,
+    pub kind: u8,
+    pub continental: bool,
+    pub active: bool,
 }
 
 pub struct Habitat {
@@ -141,6 +160,9 @@ pub struct Habitat {
     pub radius_km: f64,
     pub width_km: f64,
     pub height_km: f64,
+    /// Level 1's volcanoes (`CellInput::volcanoes`); none for a level
+    /// without them.
+    pub volcanoes: Vec<Volcano>,
 }
 
 impl Habitat {
@@ -362,6 +384,17 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
         }
     }
 
+    // The volcanoes: each at the cell nearest it, as a river's point.
+    let volcanoes: Vec<Volcano> = volcanoes_of(input.volcanoes.unwrap_or(&[]))
+        .into_iter()
+        .map(|(x, y, mut v)| {
+            let x = domain.wrap_x(x);
+            let y = js::min(domain.height - 1e-6, js::max(0.0, y));
+            v.cell = sampler.nearest_cell(&mut fm, x, y);
+            v
+        })
+        .collect();
+
     // The lakes near, the sea within two rings.
     let mut near_lake = vec![0u8; n];
     let mut near_sea = vec![0u8; n];
@@ -451,8 +484,46 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
         radius_km: fm.radius_m / 1000.0,
         width_km: domain.width * fm.unit_m / 1000.0,
         height_km: domain.height * fm.unit_m / 1000.0,
+        volcanoes,
     };
     (habitat, owners)
+}
+
+/// The volcanoes of level 1's list, [x, y, thickness, kind, continental,
+/// active] a volcano: (x, y, the volcano without its cell). None where
+/// the list is not in that form: its length not a multiple of six, a kind
+/// not 0 … 3, a flag not 0 or 1. Level 1 before 2026-10-30 held [x, y,
+/// thickness, kind]; read in sixes, its x and y fall on the flags.
+pub fn volcanoes_of(raw: &[f64]) -> Vec<(f64, f64, Volcano)> {
+    let stride = 6;
+    let flag = |x: f64| x == 0.0 || x == 1.0;
+    let fits = raw.len().is_multiple_of(stride)
+        && raw.chunks(stride).all(|v| {
+            v[0].is_finite()
+                && v[1].is_finite()
+                && v[2].is_finite()
+                && matches!(v[3], 0.0 | 1.0 | 2.0 | 3.0)
+                && flag(v[4])
+                && flag(v[5])
+        });
+    if !fits {
+        return Vec::new();
+    }
+    raw.chunks(stride)
+        .map(|v| {
+            (
+                v[0],
+                v[1],
+                Volcano {
+                    cell: 0,
+                    thickness: v[2],
+                    kind: v[3] as u8,
+                    continental: v[4] == 1.0,
+                    active: v[5] == 1.0,
+                },
+            )
+        })
+        .collect()
 }
 
 /// The distance between two cells' centres, km: the

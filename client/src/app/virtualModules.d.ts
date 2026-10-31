@@ -83,7 +83,7 @@ declare module 'casas-incubator-wasm/casas-incubator.js' {
   export function iceReachKm(): number
   export function seaDropM(): number
   export class Incubator {
-    constructor(sphere: boolean, spacingKm: number, width: number, height: number, nodes: Int32Array, nodeW: number, nodeH: number, land: Uint8Array, biome: Uint8Array, koppen: Uint8Array, z: Float32Array, lakeDepth: Float32Array, ecology: Uint8Array, ecologyPresent: number, riverPoints?: Float32Array, riverLengths?: Uint32Array, riverRegimes?: Uint8Array, shelfCarrying?: Uint8Array)
+    constructor(sphere: boolean, spacingKm: number, width: number, height: number, nodes: Int32Array, nodeW: number, nodeH: number, land: Uint8Array, biome: Uint8Array, koppen: Uint8Array, z: Float32Array, lakeDepth: Float32Array, ecology: Uint8Array, ecologyPresent: number, riverPoints?: Float32Array, riverLengths?: Uint32Array, riverRegimes?: Uint8Array, shelfCarrying?: Uint8Array, volcanoes?: Float64Array)
     free(): void
     count(): number
     owners(): Int32Array

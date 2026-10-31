@@ -50,6 +50,7 @@ export function cellInputOf(kind: CellInput['kind'], width: number, height: numb
     ecology: Object.fromEntries((['game', 'carryingCapacity', ...LEVEL_ECOLOGY] as const).flatMap((id) => (land.ecology[id] ? [[id, land.ecology[id]]] : []))),
     shelfCarrying: land.shelfEcology.carryingCapacity ?? null,
     rivers: level.rivers,
+    volcanoes: land.volcanoes ?? null,
   }
 }
 
@@ -65,7 +66,7 @@ export interface HistoryIncubator {
   populate(seed: number): void
   originOf(seed: number, reachKm?: number, seaLowM?: number): number
 }
-export type IncubatorBuild<T> = new (sphere: boolean, spacingKm: number, width: number, height: number, nodes: Int32Array, nodeW: number, nodeH: number, land: Uint8Array, biome: Uint8Array, koppen: Uint8Array, z: Float32Array, lakeDepth: Float32Array, ecology: Uint8Array, present: number, riverPoints?: Float32Array, riverLengths?: Uint32Array, riverRegimes?: Uint8Array, shelfCarrying?: Uint8Array) => T
+export type IncubatorBuild<T> = new (sphere: boolean, spacingKm: number, width: number, height: number, nodes: Int32Array, nodeW: number, nodeH: number, land: Uint8Array, biome: Uint8Array, koppen: Uint8Array, z: Float32Array, lakeDepth: Float32Array, ecology: Uint8Array, present: number, riverPoints?: Float32Array, riverLengths?: Uint32Array, riverRegimes?: Uint8Array, shelfCarrying?: Uint8Array, volcanoes?: Float64Array) => T
 
 // The crate's incubator on the cells' input.
 export function incubatorOf<T>(Build: IncubatorBuild<T>, input: CellInput, spacingKm = 10): T {
@@ -81,7 +82,7 @@ export function incubatorOf<T>(Build: IncubatorBuild<T>, input: CellInput, spaci
   const ecology = new Uint8Array(parts.length * n)
   parts.forEach((p, k) => ecology.set(p, k * n))
   const r = input.rivers
-  return new Build(input.kind === 'sphere', spacingKm, input.width, input.height, input.nodes, input.nodeW, input.nodeH, input.land, input.biome, input.koppen, input.z, input.lakeDepth, ecology, present, r ? Float32Array.from(r.points) : undefined, r ? Uint32Array.from(r.lengths) : undefined, r ? Uint8Array.from(r.regimes) : undefined, input.shelfCarrying ?? undefined)
+  return new Build(input.kind === 'sphere', spacingKm, input.width, input.height, input.nodes, input.nodeW, input.nodeH, input.land, input.biome, input.koppen, input.z, input.lakeDepth, ecology, present, r ? Float32Array.from(r.points) : undefined, r ? Uint32Array.from(r.lengths) : undefined, r ? Uint8Array.from(r.regimes) : undefined, input.shelfCarrying ?? undefined, input.volcanoes ?? undefined)
 }
 
 // The rain's reliability on the climate's chart, as the history takes it:

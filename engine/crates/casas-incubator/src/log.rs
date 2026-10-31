@@ -138,6 +138,27 @@ pub enum LogEvent {
         at: f64,
         years: f64,
     },
+    /// A large explosive eruption of VEI `vei` (eruptions.rs, simulation.rs
+    /// THE ERUPTIONS) at the vent's cell, on the landmass nearest it: its
+    /// ash over `km2` of the land, `people` dead, `left` fled.
+    Eruption {
+        at: f64,
+        cell: f64,
+        landmass: f64,
+        vei: f64,
+        km2: f64,
+        people: f64,
+        left: f64,
+    },
+    /// A fissure eruption (eruptions.rs), as Eruption: its gas over `km2`.
+    Fissure {
+        at: f64,
+        cell: f64,
+        landmass: f64,
+        km2: f64,
+        people: f64,
+        left: f64,
+    },
     /// THE PEOPLES' CHRONICLE (peoples.rs `Tree::tell`, since 2026-10-29),
     /// for the big peoples; `people` a people's id (pack.rs), `count` its
     /// people. People `new` parted from `people`; `new`'s measure, at its
@@ -212,6 +233,8 @@ impl LogEvent {
             | LogEvent::SeaFloodsIce { at, .. }
             | LogEvent::LandRises { at, .. }
             | LogEvent::ColdSpell { at, .. }
+            | LogEvent::Eruption { at, .. }
+            | LogEvent::Fissure { at, .. }
             | LogEvent::PeopleSplit { at, .. }
             | LogEvent::PeopleMerged { at, .. }
             | LogEvent::PeopleReplaced { at, .. }
@@ -486,6 +509,53 @@ impl LogEvent {
             LogEvent::ColdSpell { at, years } => {
                 kind(j, "coldSpell");
                 j.key("at").number(*at).key("years").number(*years);
+            }
+            LogEvent::Eruption {
+                at,
+                cell,
+                landmass,
+                vei,
+                km2,
+                people,
+                left,
+            } => {
+                kind(j, "eruption");
+                j.key("at")
+                    .number(*at)
+                    .key("cell")
+                    .number(*cell)
+                    .key("landmass")
+                    .number(*landmass)
+                    .key("vei")
+                    .number(*vei);
+                j.key("km2")
+                    .number(*km2)
+                    .key("people")
+                    .number(*people)
+                    .key("left")
+                    .number(*left);
+            }
+            LogEvent::Fissure {
+                at,
+                cell,
+                landmass,
+                km2,
+                people,
+                left,
+            } => {
+                kind(j, "fissure");
+                j.key("at")
+                    .number(*at)
+                    .key("cell")
+                    .number(*cell)
+                    .key("landmass")
+                    .number(*landmass);
+                j.key("km2")
+                    .number(*km2)
+                    .key("people")
+                    .number(*people)
+                    .key("left")
+                    .number(*left);
             }
             LogEvent::PeopleSplit {
                 at,

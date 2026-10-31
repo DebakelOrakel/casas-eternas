@@ -2117,6 +2117,7 @@ mod tests {
             radius_km: 0.0,
             width_km: 0.0,
             height_km: 0.0,
+            volcanoes: Vec::new(),
         }
     }
 

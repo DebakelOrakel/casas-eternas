@@ -36,6 +36,11 @@ export interface CellInput {
   shelfCarrying: Uint8Array | null
   // The level's rivers, in the world raster's texels.
   rivers: Pick<RiverPolylines, 'points' | 'lengths' | 'regimes'> | null
+  // Level 1's volcanoes (LevelLand's `volcanoes`, TEG-21), in the world
+  // raster's texels: what the history's eruptions read (casas-incubator
+  // eruptions.rs). Null where the level has none; the crate reads a list in
+  // the form before 2026-10-30 as none.
+  volcanoes: Float64Array | null
 }
 
 // A plant's, a tree's, an animal's layer: one code a cell (0 nothing, 1

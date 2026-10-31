@@ -154,3 +154,18 @@ before). Active: 38 continental arcs, 180 island arcs, 2 continental and
 4 oceanic hotspots, 1 flood basalt; inactive: 822 extinct arcs, 47
 hotspots, 4 flood basalts. The flood basalts stand at a rift's edge, on
 oceanic crust by the rafts' field.
+
+2026-10-31 (TEG-131): the incubator's eruptions use the rule above
+(`casas-incubator` eruptions.rs; DES-0032, open item 9). Only active
+volcanoes erupt, and only VEI 6 and more is computed. The rates are the
+earth's (VEI 6 once a century, VEI 7 once a millennium, VEI 8 once in
+50 000 years, a Laki-size fissure once a millennium), times the world's
+active explosive volcanoes over the earth's some 1 000 (the effusive ones
+over some 45 hotspots); the thickness weights which volcano erupts. Ash
+covers 100, 400 and 1 000 km round the vent for 10, 50 and 300 years; a
+fissure's gas 250 km for 5 years. Measured on the v15 worlds' level 1
+(made again at level 1's budget, with the activity), the own origin:
+Morvane 220 explosive and 5 effusive, 21 eruptions of VEI 6, a fissure;
+Thalassor 228 and 2, 19 of VEI 6 and 2 of VEI 7; Zephyra 246 and 2, 20
+and 2. On Zephyra half the island arcs stand 140 km or more from land: most of
+their ash falls on the sea.

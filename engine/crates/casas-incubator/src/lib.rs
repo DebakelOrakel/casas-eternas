@@ -10,6 +10,7 @@
 pub mod catalog;
 pub mod chart;
 pub mod climate_history;
+pub mod eruptions;
 pub mod flora;
 pub mod habitat;
 pub mod history;

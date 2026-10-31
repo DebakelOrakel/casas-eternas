@@ -18,7 +18,9 @@
 //!    neighbours (THE RISING SEA); one that carries again may be settled
 //!    again. A cold spell (climate_history.rs THE COLD SPELLS) moves what
 //!    the land carries at its start and its end too. The dry belt is
-//!    wetter from step 2's start and dries once (THE LAND DRYING).
+//!    wetter from step 2's start and dries once (THE LAND DRYING). The
+//!    large eruptions (eruptions.rs, THE ERUPTIONS) cover the land near
+//!    them with ash, and the largest cool the world as a cold spell does.
 //! 1. GROWTH: each cell's people toward what the land carries (its carrying
 //!    capacity, CARRYING_FULL at FORAGER_DENSITY a km², to twice), by
 //!    GROWTH_A a year, logistic.
@@ -50,6 +52,10 @@
 use crate::climate_history::{
     COLD_SPELL_DRY, COLD_SPELL_YEARS, ClimateHistory, ICE_REACH_KM, Rebound, cold_share,
     cold_spells, drying_start, humid_gain, ice_may_cover, spell_cold, wetness,
+};
+use crate::eruptions::{
+    ERUPTION_TOLD_PEOPLE, Eruption, FISSURE_TOLD_SHARE, ash_of, ash_years, eruption_cold,
+    eruptions_of,
 };
 use crate::habitat::{ARABLE, COPPER, FISH, Habitat, PASTURE, km_between, latitude_deg};
 use crate::log::{LogEvent, POPULATION_MARKS};
@@ -980,6 +986,10 @@ struct Sim<'h, 'a> {
     log: Vec<LogEvent>,
     // THE PEOPLES (peoples.rs): they feed back into nothing here.
     traits: Traits,
+    // THE ERUPTIONS: the share of what each cell carries the ash or the
+    // gas takes now, and the ash falls that still fade.
+    ash: Vec<f32>,
+    ashes: Vec<Ash>,
 }
 
 impl Sim<'_, '_> {
@@ -1034,7 +1044,7 @@ impl Sim<'_, '_> {
     }
 
     fn carried(&self, i: usize) -> f64 {
-        self.capacity[i] as f64 * self.food(i) * self.gain(i)
+        self.capacity[i] as f64 * self.food(i) * self.gain(i) * self.ash_keep(i)
     }
 
     fn codes_of(&self, d: usize) -> &[u8] {
@@ -1612,6 +1622,8 @@ pub fn simulate(
         landmass_reached: vec![0u8; h.landmasses],
         log: Vec::new(),
         traits: Traits::seed(h, input.peopling, input.seed, &way_days),
+        ash: vec![0f32; n],
+        ashes: Vec::new(),
     };
     let mut extinctions: Vec<Extinction> = Vec::new();
     // Herds a farming centre tames HERD_LAG after its fields.
@@ -1690,6 +1702,9 @@ pub fn simulate(
     // added at the last step.
     let spells = cold_spells(input.seed, t0, STEP_YEARS);
     let mut spell_was = 0.0;
+    // The eruptions, all after t0 (THE ERUPTIONS), and the next to come.
+    let eruptions = eruptions_of(input.seed, &h.volcanoes, t0, SPAN_YEARS, STEP_YEARS);
+    let mut next_eruption = 0usize;
 
     // The droughts' squares (THE DROUGHTS): their cells, their mean
     // variability and ENSO mark, their anomaly, rain, dry steps in a row,
@@ -1885,11 +1900,13 @@ pub fn simulate(
         // 0. A cold spell begins or ends (THE COLD SPELLS): what the cells
         //    carry, at the climate's last CLIMATE_YEARS; every lived-in
         //    cell grows or shrinks to it (its change is under
-        //    CAPACITY_MOVED in the warm climates).
-        let spell = spell_cold(&spells, t);
+        //    CAPACITY_MOVED in the warm climates). The cold of a large
+        //    eruption is a spell's (THE ERUPTIONS), not told as one.
+        let own_spell = spell_cold(&spells, t);
+        let spell = own_spell + eruption_cold(&eruptions, t);
         if spell != spell_was {
             spell_was = spell;
-            if spell > 0.0 {
+            if own_spell > 0.0 && spell_cold(&spells, t - STEP_YEARS) == 0.0 {
                 sim.log.push(LogEvent::ColdSpell {
                     at: t,
                     years: COLD_SPELL_YEARS,
@@ -2783,42 +2800,8 @@ pub fn simulate(
                     fleeing += (1.0 - FAMINE_DEATH) * over;
                     sim.people[i] = k as f32;
                 }
-                // Their room around the square, people.
-                let mut room = 0.0;
-                let mut rooms = Vec::with_capacity(square_rim[q].len());
-                for &u in &square_rim[q] {
-                    let free = if sim.rain_of(u) < 1.0 || sim.capacity[u] <= 0.0 {
-                        0.0
-                    } else {
-                        js::max(
-                            0.0,
-                            (FLIGHT_CROWD * sim.capacity[u] as f64 * sim.food(u) * sim.gain(u)
-                                - sim.people[u] as f64)
-                                * h.area_km2[u] as f64,
-                        )
-                    };
-                    rooms.push(free);
-                    room += free;
-                }
-                let fled = js::min(fleeing, room);
+                let fled = sim.flee(&square_rim[q], fleeing, most, t);
                 lost += fleeing - fled;
-                if fled > 0.0 {
-                    for (k, &u) in square_rim[q].iter().enumerate() {
-                        if rooms[k] <= 0.0 {
-                            continue;
-                        }
-                        let density = (rooms[k] * fled) / room / h.area_km2[u] as f64;
-                        if sim.people[u] == 0.0 {
-                            // `most` is a cell: the people fled have some.
-                            sim.settle(u, t, density, most, most as usize);
-                        } else {
-                            sim.traits
-                                .moved_in(u, most as usize, density, sim.people[u] as f64);
-                            sim.people[u] = (sim.people[u] as f64 + density) as f32;
-                            sim.grows(u);
-                        }
-                    }
-                }
                 let mut left = 0;
                 for v in 0..village_to.len() {
                     let cell = villages[2 * v] as usize;
@@ -2854,6 +2837,18 @@ pub fn simulate(
                 if f.cell < 0 {
                     f.cell = most;
                 }
+            }
+        }
+        // 0d. The eruptions (THE ERUPTIONS): the ash fades; an eruption of
+        //    this step covers the land near it.
+        if !sim.ashes.is_empty() {
+            sim.ash_fades(t);
+        }
+        while next_eruption < eruptions.len() && eruptions[next_eruption].at <= t {
+            let e = eruptions[next_eruption];
+            next_eruption += 1;
+            if let Some(event) = sim.erupt(&e, t) {
+                sim.log.push(event);
             }
         }
         // 1. Growth, or shrinking toward less; a cell near what it carries
@@ -3198,4 +3193,207 @@ pub fn simulate(
     )
     .goods;
     result
+}
+
+// THE ERUPTIONS (2026-10-31, TEG-131; eruptions.rs): each eruption drawn
+// for this step covers the cells within its reach with ash (a fissure's
+// with gas), which takes a share of what they carry, `ash_loss` at the
+// vent down to nothing at the edge; the share fades to nothing over its
+// `ash_years`, a step at a time. As in a famine (THE FLIGHT) the people
+// over what a covered cell carries now leave it at once: FAMINE_DEATH of
+// them die, the rest go to the cells around the cover that carry and no
+// famine holds, as far as each has room; the rest of them die too. A
+// village under VILLAGE_LEAVE of its least is left at the next
+// CLIMATE_YEARS. The log tells it (`Eruption`, `Fissure`; eruptions.rs
+// WHAT THE CHRONICLE TELLS) at the vent's cell, on the landmass nearest
+// the vent.
+struct Ash {
+    // The cells covered and the share each lost at first.
+    cells: Vec<(usize, f32)>,
+    at: f64,
+    years: f64,
+}
+
+impl Sim<'_, '_> {
+    // The share of what a cell carries the ash leaves it, 1 without ash.
+    fn ash_keep(&self, i: usize) -> f64 {
+        1.0 - self.ash[i] as f64
+    }
+
+    // THE FLIGHT: `fleeing` people of a famine or an eruption go to the
+    // cells of `rim` that carry and no famine holds, each up to
+    // FLIGHT_CROWD times what it carries, in proportion to its room; they
+    // take the traits of `most`, a cell they left. The people who found
+    // room.
+    fn flee(&mut self, rim: &[usize], fleeing: f64, most: i32, t: f64) -> f64 {
+        let h = self.h;
+        // Their room around, people.
+        let mut room = 0.0;
+        let mut rooms = Vec::with_capacity(rim.len());
+        for &u in rim {
+            let free = if self.rain_of(u) < 1.0 || self.capacity[u] <= 0.0 {
+                0.0
+            } else {
+                js::max(
+                    0.0,
+                    (FLIGHT_CROWD
+                        * self.capacity[u] as f64
+                        * self.food(u)
+                        * self.gain(u)
+                        * self.ash_keep(u)
+                        - self.people[u] as f64)
+                        * h.area_km2[u] as f64,
+                )
+            };
+            rooms.push(free);
+            room += free;
+        }
+        let fled = js::min(fleeing, room);
+        if fled > 0.0 {
+            for (k, &u) in rim.iter().enumerate() {
+                if rooms[k] <= 0.0 {
+                    continue;
+                }
+                let density = (rooms[k] * fled) / room / h.area_km2[u] as f64;
+                if self.people[u] == 0.0 {
+                    // `most` is a cell: the people fled have some.
+                    self.settle(u, t, density, most, most as usize);
+                } else {
+                    self.traits
+                        .moved_in(u, most as usize, density, self.people[u] as f64);
+                    self.people[u] = (self.people[u] as f64 + density) as f32;
+                    self.grows(u);
+                }
+            }
+        }
+        fled
+    }
+
+    // The ash at `t`: each fall's share fades over its years; a fall gone
+    // is dropped. The cells lived in grow or shrink again.
+    fn ash_fades(&mut self, t: f64) {
+        let falls = std::mem::take(&mut self.ashes);
+        for a in &falls {
+            for &(c, _) in &a.cells {
+                self.ash[c] = 0.0;
+            }
+        }
+        for a in &falls {
+            if t >= a.at + a.years {
+                continue;
+            }
+            let keep = 1.0 - (t - a.at) / a.years;
+            for &(c, loss) in &a.cells {
+                self.ash[c] = js::max(self.ash[c] as f64, loss as f64 * keep) as f32;
+            }
+        }
+        for a in &falls {
+            for &(c, _) in &a.cells {
+                if self.people[c] > 0.0 {
+                    self.grows(c);
+                }
+            }
+        }
+        self.ashes = falls.into_iter().filter(|a| t < a.at + a.years).collect();
+    }
+
+    // An eruption at `t`: its ash, the people it kills and drives away;
+    // the event when the log tells it.
+    fn erupt(&mut self, e: &Eruption, t: f64) -> Option<LogEvent> {
+        let h = self.h;
+        let vent = h.volcanoes[e.volcano].cell;
+        let cells = ash_of(h, vent, e.vei);
+        let in_ash: HashSet<usize> = cells.iter().map(|&(c, _)| c).collect();
+        let mut km2 = 0.0;
+        let mut before = 0.0;
+        let mut lost = 0.0;
+        let mut fleeing = 0.0;
+        let mut most: i32 = -1;
+        for &(c, loss) in &cells {
+            self.ash[c] = js::max(self.ash[c] as f64, loss as f64) as f32;
+            if self.capacity[c] <= 0.0 {
+                continue;
+            }
+            km2 += h.area_km2[c] as f64;
+            if self.people[c] == 0.0 {
+                continue;
+            }
+            before += self.people[c] as f64 * h.area_km2[c] as f64;
+            if most < 0 || self.people[c] > self.people[most as usize] {
+                most = c as i32;
+            }
+            let k = self.carried(c);
+            if self.people[c] as f64 > k {
+                let over = (self.people[c] as f64 - k) * h.area_km2[c] as f64;
+                lost += FAMINE_DEATH * over;
+                fleeing += (1.0 - FAMINE_DEATH) * over;
+                self.people[c] = k as f32;
+            }
+            self.grows(c);
+        }
+        // The cells around the cover.
+        let mut rim = Vec::new();
+        let mut seen = HashSet::new();
+        for &(c, _) in &cells {
+            for edge in h.edges(c) {
+                let u = h.nbr[edge] as usize;
+                if !in_ash.contains(&u) && self.capacity[u] > 0.0 && seen.insert(u) {
+                    rim.push(u);
+                }
+            }
+        }
+        let fled = if fleeing > 0.0 {
+            self.flee(&rim, fleeing, most, t)
+        } else {
+            0.0
+        };
+        lost += fleeing - fled;
+        self.ashes.push(Ash {
+            cells,
+            at: t,
+            years: ash_years(e.vei),
+        });
+        let hit = lost + fled;
+        let told = if e.vei == 0 {
+            hit >= ERUPTION_TOLD_PEOPLE && hit >= FISSURE_TOLD_SHARE * before
+        } else {
+            e.vei >= 7 || hit >= ERUPTION_TOLD_PEOPLE
+        };
+        if !told {
+            return None;
+        }
+        // The landmass nearest the vent.
+        let mut landmass = -1;
+        let mut nearest = f64::INFINITY;
+        for c in 0..h.count {
+            if h.landmass[c] < 0 {
+                continue;
+            }
+            let d = km_between(h, vent, c);
+            if d < nearest {
+                nearest = d;
+                landmass = h.landmass[c];
+            }
+        }
+        Some(if e.vei == 0 {
+            LogEvent::Fissure {
+                at: t,
+                cell: vent as f64,
+                landmass: landmass as f64,
+                km2,
+                people: lost,
+                left: fled,
+            }
+        } else {
+            LogEvent::Eruption {
+                at: t,
+                cell: vent as f64,
+                landmass: landmass as f64,
+                vei: e.vei as f64,
+                km2,
+                people: lost,
+                left: fled,
+            }
+        })
+    }
 }

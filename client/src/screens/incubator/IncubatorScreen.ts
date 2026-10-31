@@ -972,6 +972,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const DRYING_RGB = [190, 150, 80] as const
   // The land rising where the ice lay (its flooding takes DROWNED_RGB).
   const REBOUND_RGB = [110, 120, 90] as const
+  const ERUPTION_RGB = [170, 60, 40] as const
   // The peoples' splits, merges and ends (peoples.rs Tree::tell).
   const PEOPLES_RGB = [150, 80, 60] as const
   function sayChronicle(): void {
@@ -1065,6 +1066,15 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             rgb: flood ? DROWNED_RGB : REBOUND_RGB,
             title: t(flood ? 'incubator.chronicle.event.seaFloodsIce' : 'incubator.chronicle.event.landRises'),
             detail: t(flood ? 'incubator.chronicle.seaFloodsIceDetail' : 'incubator.chronicle.landRisesDetail', area),
+          }, e.cell)
+        } else if (e.kind === 'eruption' || e.kind === 'fissure') {
+          const measure = { landmass: landmassName(e.landmass), area: Math.round(e.km2).toLocaleString(getLocale()), people: Math.round(e.people).toLocaleString(getLocale()), left: Math.round(e.left).toLocaleString(getLocale()) }
+          place({
+            time: e.at,
+            icon: '/icons/volcano.png',
+            rgb: ERUPTION_RGB,
+            title: t(e.kind === 'eruption' ? 'incubator.chronicle.event.eruption' : 'incubator.chronicle.event.fissure'),
+            detail: t(e.kind === 'eruption' ? 'incubator.chronicle.eruptionDetail' : 'incubator.chronicle.fissureDetail', measure),
           }, e.cell)
         } else if (e.kind === 'coldSpell') {
           // No place: the whole world's.
