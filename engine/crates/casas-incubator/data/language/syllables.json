@@ -1,0 +1,64 @@
+{
+  "about": "Syllable forms and the rules on what may stand where. A language draws a complexity class, then the forms of that class with their weights. See README.md.",
+  "sources": [
+    "WALS 12A Syllable Structure (Maddieson): 486 languages; simple (C)V: 61, moderately complex (C)(C)V(C) with a limited second onset consonant: 274, complex: 151.",
+    "Sonority Sequencing Principle: Clements, G. N. 1990. The role of the sonority cycle in core syllabification. Papers in Laboratory Phonology I, 283-333; Selkirk, E. 1984. On the major class features and syllable theory.",
+    "Word length of roots: rough shares, set by hand (no single source)."
+  ],
+  "complexity": [
+    { "id": "simple",            "weight": 61,  "forms": ["V", "CV"] },
+    { "id": "moderatelyComplex", "weight": 274, "forms": ["V", "CV", "VC", "CVC", "CGV", "CLV", "CVN", "CVV"] },
+    { "id": "complex",           "weight": 151, "forms": ["V", "CV", "VC", "CVC", "CCV", "CCVC", "CVCC", "CCVCC", "CCCV", "CCCVC", "VCC", "CVCCC", "sCV", "sCVC", "CGV", "CLV", "CLVC", "CVN", "CVV", "CVVC"] }
+  ],
+  "forms": [
+    { "id": "V",     "weight": 0.5, "onsetMax": 0, "codaMax": 0 },
+    { "id": "CV",    "weight": 3.0, "onsetMax": 1, "codaMax": 0 },
+    { "id": "VC",    "weight": 0.4, "onsetMax": 0, "codaMax": 1 },
+    { "id": "CVC",   "weight": 2.0, "onsetMax": 1, "codaMax": 1 },
+    { "id": "CVN",   "weight": 0.8, "onsetMax": 1, "codaMax": 1, "coda": "N",  "note": "The coda is a nasal only." },
+    { "id": "CVV",   "weight": 0.4, "onsetMax": 1, "codaMax": 0, "nucleus": "VV", "note": "A long vowel, or a vowel and a glide (j, w)." },
+    { "id": "CVVC",  "weight": 0.2, "onsetMax": 1, "codaMax": 1, "nucleus": "VV" },
+    { "id": "CGV",   "weight": 0.6, "onsetMax": 2, "codaMax": 0, "onset": "CG", "note": "The second onset sound is a glide (j, w)." },
+    { "id": "CLV",   "weight": 0.8, "onsetMax": 2, "codaMax": 0, "onset": "OL", "note": "An obstruent and a liquid." },
+    { "id": "CLVC",  "weight": 0.5, "onsetMax": 2, "codaMax": 1, "onset": "OL" },
+    { "id": "CCV",   "weight": 0.6, "onsetMax": 2, "codaMax": 0 },
+    { "id": "CCVC",  "weight": 0.5, "onsetMax": 2, "codaMax": 1 },
+    { "id": "CVCC",  "weight": 0.3, "onsetMax": 1, "codaMax": 2 },
+    { "id": "VCC",   "weight": 0.1, "onsetMax": 0, "codaMax": 2 },
+    { "id": "CCVCC", "weight": 0.15, "onsetMax": 2, "codaMax": 2 },
+    { "id": "sCV",   "weight": 0.3, "onsetMax": 2, "codaMax": 0, "onset": "sP", "note": "s and a stop: the usual exception to sonority sequencing." },
+    { "id": "sCVC",  "weight": 0.2, "onsetMax": 2, "codaMax": 1, "onset": "sP" },
+    { "id": "CCCV",  "weight": 0.05, "onsetMax": 3, "codaMax": 0, "onset": "sPL", "note": "Only s, a stop and a liquid or glide." },
+    { "id": "CCCVC", "weight": 0.03, "onsetMax": 3, "codaMax": 1, "onset": "sPL" },
+    { "id": "CVCCC", "weight": 0.02, "onsetMax": 1, "codaMax": 3 }
+  ],
+  "formsNote": "C any consonant, V a vowel, N a nasal, G a glide (j w), L a liquid (l ʎ ɾ r ɹ), O an obstruent (stop, affricate, fricative), P a stop, s the sound s. A language takes all forms of its class with the weights above, and keeps a random share (0.6 to 1.0) of the forms other than V and CV.",
+  "sonority": {
+    "scale": "sounds.json 'sonority': stop 1, affricate 2, fricative 3, nasal 4, tap/trill/lateral 5, approximant 6, vowel 7. Voiced obstruents count +0.5.",
+    "onsetRises": true,
+    "codaFalls": true,
+    "minDistance": [
+      { "id": "loose",  "weight": 0.3, "value": 1 },
+      { "id": "normal", "weight": 0.5, "value": 2 },
+      { "id": "strict", "weight": 0.2, "value": 3 }
+    ],
+    "exceptions": ["sP", "sPL"],
+    "note": "In an onset, each sound has a sonority higher than the one before it by at least minDistance; in a coda, lower than the one before it. The exceptions are the onsets of the forms sCV, sCVC, CCCV, CCCVC."
+  },
+  "constraints": [
+    { "id": "noGeminateCluster", "rule": "two equal consonants do not stand in one onset or one coda" },
+    { "id": "noHomorganOnset",   "rule": "an onset of two consonants at the same place does not occur, except stop + liquid at alveolar (tr, dr)", "strength": 0.9 },
+    { "id": "noInitialNg",       "rule": "ŋ does not start a word", "strength": 0.7 },
+    { "id": "noCodaH",           "rule": "h and ʔ do not end a syllable", "strength": 0.6 },
+    { "id": "noCodaGlide",       "rule": "j and w do not end a syllable, except as part of the nucleus (form CVV)" },
+    { "id": "noGlideSameVowel",  "rule": "j does not stand before i, w does not stand before u", "strength": 0.9 },
+    { "id": "noVowelHiatus",     "rule": "two vowels do not stand next to each other across a syllable edge", "strength": 0.5 },
+    { "id": "codaSubset",        "rule": "a language draws the consonants that may end a syllable: all, or the sonorants only, or nasals only", "choices": [{ "id": "all", "weight": 0.4 }, { "id": "sonorants", "weight": 0.35 }, { "id": "nasals", "weight": 0.25 }] }
+  ],
+  "rootLength": [
+    { "syllables": 1, "weight": 0.35 },
+    { "syllables": 2, "weight": 0.45 },
+    { "syllables": 3, "weight": 0.2 }
+  ],
+  "rootLengthNote": "The syllables of a lexicon root. Short words make compounds that do not get too long; the language may shift the weights (one value, 'wordLength', drawn per language)."
+}

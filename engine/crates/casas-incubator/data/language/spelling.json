@@ -1,0 +1,89 @@
+{
+  "about": "Spelling styles: how a word kept as sounds is written in letters. A style changes the default romanisation of sounds.json ('roman', 'alt') only where it says so. See README.md.",
+  "sources": [
+    "The conventions of the Latin-alphabet orthographies the styles are modelled on (Romance, German, West and South Slavic, Scandinavian); Daniels, P. T. & Bright, W. (eds.) 1996. The World's Writing Systems. Oxford University Press."
+  ],
+  "fields": {
+    "diacritics": "false: every letter is a-z or the apostrophe; an 'alt' with a diacritic is not used, the 'roman' stands",
+    "map": "sound id → letters; overrides 'roman' and, for a long vowel, longVowel",
+    "context": "spellings that depend on the neighbours: before/after take V, C, frontV (i e ɛ y æ and their long forms), backV, # (word edge)",
+    "longVowel": "how a long vowel is written: double (aa), macron (ā), acute (á), circumflex (â), h (ah), single (a: length not shown)",
+    "nasalVowel": "how a nasal vowel is written: n (an), tilde (ã)",
+    "geminate": "how two equal consonants are written: double (tt) or single (t)",
+    "collision": "when two sounds of one inventory get the same letters, the rarer sound (lower weight in sounds.json) takes its 'alt'; if that also collides or is not allowed, the two sounds share the letters (as in many real spellings)",
+    "capital": "the first letter of a name is a capital; a digraph capitalises only its first letter (Sh, not SH)"
+  },
+  "styles": [
+    {
+      "id": "plain",
+      "weight": 2,
+      "diacritics": false,
+      "longVowel": "double",
+      "nasalVowel": "n",
+      "geminate": "double",
+      "map": {},
+      "context": []
+    },
+    {
+      "id": "latinate",
+      "weight": 1,
+      "diacritics": false,
+      "longVowel": "single",
+      "nasalVowel": "n",
+      "geminate": "double",
+      "map": { "k": "c", "kʷ": "qu", "tʃ": "ci", "dʒ": "gi", "ʃ": "sci", "ɲ": "gn", "ʎ": "gli", "ts": "z", "dz": "z", "j": "i", "w": "u", "x": "h", "h": "h", "ɛ": "e", "ɔ": "o", "ə": "e", "r": "rr", "ɾ": "r" },
+      "context": [
+        { "sound": "k",  "before": "frontV", "letters": "ch" },
+        { "sound": "g",  "before": "frontV", "letters": "gh" },
+        { "sound": "tʃ", "before": "frontV", "letters": "c" },
+        { "sound": "dʒ", "before": "frontV", "letters": "g" },
+        { "sound": "ʃ",  "before": "frontV", "letters": "sc" },
+        { "sound": "r",  "after": "#",       "letters": "r" }
+      ]
+    },
+    {
+      "id": "germanic",
+      "weight": 1,
+      "diacritics": true,
+      "longVowel": "h",
+      "nasalVowel": "n",
+      "geminate": "double",
+      "map": { "ʃ": "sch", "tʃ": "tsch", "dʒ": "dsch", "ts": "z", "j": "j", "v": "w", "f": "f", "x": "ch", "ç": "ch", "y": "ü", "ø": "ö", "æ": "ä", "ɛ": "e", "ɔ": "o", "ə": "e", "ŋ": "ng", "kʷ": "qu", "ʒ": "sch", "iː": "ie" },
+      "context": [
+        { "sound": "k",  "after": "V", "before": "#", "letters": "ck" },
+        { "sound": "ts", "after": "V", "before": "#", "letters": "tz" }
+      ]
+    },
+    {
+      "id": "slavic",
+      "weight": 1,
+      "diacritics": true,
+      "longVowel": "acute",
+      "nasalVowel": "tilde",
+      "geminate": "single",
+      "map": { "ʃ": "š", "ʒ": "ž", "tʃ": "č", "dʒ": "dž", "ts": "c", "dz": "dz", "x": "ch", "j": "j", "ɲ": "ň", "ʎ": "ľ", "c": "ť", "ɟ": "ď", "ɨ": "y", "ɛ": "e", "ɔ": "o", "ə": "e", "w": "v", "ɣ": "h", "h": "h" },
+      "context": []
+    },
+    {
+      "id": "nordic",
+      "weight": 1,
+      "diacritics": true,
+      "longVowel": "acute",
+      "nasalVowel": "n",
+      "geminate": "double",
+      "map": { "θ": "þ", "ð": "ð", "j": "j", "ʃ": "sj", "tʃ": "tj", "y": "y", "ɨ": "u", "ø": "ø", "æ": "æ", "ɔ": "å", "ɔː": "á", "ɛ": "e", "ə": "e", "w": "v", "x": "kh", "ŋ": "ng" },
+      "context": []
+    },
+    {
+      "id": "austral",
+      "weight": 1,
+      "diacritics": false,
+      "longVowel": "double",
+      "nasalVowel": "n",
+      "geminate": "double",
+      "map": { "ŋ": "ng", "ɲ": "ny", "c": "tj", "ɟ": "dj", "ʈ": "rt", "ɖ": "rd", "ɳ": "rn", "ɾ": "r", "r": "rr", "ɹ": "r", "j": "y", "ʔ": "'", "ɛ": "e", "ɔ": "o", "ə": "a", "ɪ": "i", "ʊ": "u" },
+      "context": [],
+      "note": "Modelled on the practical orthographies of Australian and Pacific languages: few letters, digraphs for place."
+    }
+  ]
+}

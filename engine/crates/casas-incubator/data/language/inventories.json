@@ -1,0 +1,82 @@
+{
+  "about": "How a proto-language draws its inventory from sounds.json: size classes, series, the sounds every language has, and implications. The steps are in README.md.",
+  "sources": [
+    "WALS 1A Consonant Inventories (Maddieson): 563 languages; small 6-14: 89, moderately small 15-18: 122, average 19-25: 201, moderately large 26-33: 94, large 34+: 57.",
+    "WALS 2A Vowel Quality Inventories (Maddieson): 564 languages; small 2-4: 93, average 5-6: 288, large 7-14: 183.",
+    "WALS 4A Voicing in Plosives and Fricatives; 5A Voicing and Gaps in Plosive Systems; 6A Uvular Consonants; 7A Glottalized Consonants; 8A Lateral Consonants; 10A Vowel Nasalization; 11A Front Rounded Vowels; 13A Tone; 14A Fixed Stress Locations (Goedemans & van der Hulst). Counts rounded to weights.",
+    "Implications: Maddieson, I. 1984. Patterns of Sounds. Cambridge University Press; Greenberg, J. 1966. Language Universals."
+  ],
+  "consonantCount": [
+    { "id": "small",           "min": 6,  "max": 14, "weight": 89 },
+    { "id": "moderatelySmall", "min": 15, "max": 18, "weight": 122 },
+    { "id": "average",         "min": 19, "max": 25, "weight": 201 },
+    { "id": "moderatelyLarge", "min": 26, "max": 33, "weight": 94 },
+    { "id": "large",           "min": 34, "max": 40, "weight": 57 }
+  ],
+  "vowelCount": [
+    { "id": "small",   "min": 2, "max": 4,  "weight": 93 },
+    { "id": "average", "min": 5, "max": 6,  "weight": 288 },
+    { "id": "large",   "min": 7, "max": 10, "weight": 183 }
+  ],
+  "vowelCountNote": "The count is of vowel qualities (short, oral). Long and nasal vowels come from the series below and do not count.",
+  "series": [
+    { "id": "voicedStops",       "weight": 0.61, "adds": "[stop +voice -aspirated -labialised]", "note": "WALS 4A/5A: about 60 % of languages have a voicing contrast in plosives." },
+    { "id": "voicedFricatives",  "weight": 0.35, "adds": "[fricative +voice]",      "note": "WALS 4A: a voicing contrast in fricatives, mostly together with one in plosives." },
+    { "id": "aspirated",         "weight": 0.18, "adds": "[+aspirated]" },
+    { "id": "ejective",          "weight": 0.10, "adds": "[+ejective]",             "note": "WALS 7A." },
+    { "id": "labialised",        "weight": 0.12, "adds": "[+labialised]" },
+    { "id": "uvular",            "weight": 0.17, "adds": "[uvular]",                "note": "WALS 6A: 96 of 566 languages have uvulars." },
+    { "id": "retroflex",         "weight": 0.08, "adds": "[retroflex]" },
+    { "id": "palatal",           "weight": 0.25, "adds": "[palatal -approximant]" },
+    { "id": "vowelLength",       "weight": 0.30, "adds": "[+long]",                 "note": "Each long vowel needs its short vowel." },
+    { "id": "nasalVowels",       "weight": 0.26, "adds": "[+nasal]",                "note": "WALS 10A: 64 of 244 languages." },
+    { "id": "frontRounded",      "weight": 0.07, "adds": "[front +rounded]",        "note": "WALS 11A: 37 of 562 languages." }
+  ],
+  "seriesNote": "A series that is not drawn removes its sounds from the draw. A series that is drawn makes its sounds candidates with their weight from sounds.json; the count classes above still limit the total.",
+  "always": {
+    "consonants": [["m", "n"], ["p", "t", "k"], ["k", "ʔ", "q"]],
+    "vowels": [["i"], ["a"], ["u", "o"]],
+    "note": "Each inner list is a choice: the inventory takes at least one of its members. Every language has a nasal, two or more stops, a close front vowel, an open vowel and a back rounded vowel (the 'vowel triangle')."
+  },
+  "implications": [
+    { "if": "[stop +voice]",       "then": "the voiceless stop at the same place", "strength": 0.95 },
+    { "if": "[fricative +voice]",  "then": "the voiceless fricative at the same place", "strength": 0.85 },
+    { "if": "[+aspirated]",        "then": "the plain stop at the same place", "strength": 1.0 },
+    { "if": "[+ejective]",         "then": "the plain stop at the same place", "strength": 1.0 },
+    { "if": "[+labialised]",       "then": "the plain stop at the same place", "strength": 1.0 },
+    { "if": "[+long]",             "then": "the short vowel of the same quality", "strength": 1.0 },
+    { "if": "[+nasal]",            "then": "the oral vowel of the same quality", "strength": 1.0 },
+    { "if": "[front +rounded]",    "then": "the unrounded front vowel of the same height", "strength": 1.0 },
+    { "if": "[affricate]",         "then": "the fricative or the stop at the same place", "strength": 0.9 },
+    { "if": "ʃ",                   "then": "s", "strength": 0.9 },
+    { "if": "ŋ",                   "then": "n", "strength": 0.95 },
+    { "if": "ɲ",                   "then": "n", "strength": 0.95 },
+    { "if": "ʎ",                   "then": "l", "strength": 0.9 },
+    { "if": "θ",                   "then": "s or f", "strength": 0.8 },
+    { "if": "q",                   "then": "k", "strength": 0.95 },
+    { "if": "g",                   "then": "d or b", "strength": 0.8, "note": "WALS 5A: a missing /g/ is a common gap; a lone /g/ is rare." },
+    { "if": "b",                   "then": "p or a gap at p", "strength": 0.6, "note": "WALS 5A: a missing /p/ is the other common gap (Arabic-type)." },
+    { "if": "ɛ",                   "then": "e", "strength": 0.6 },
+    { "if": "ɔ",                   "then": "o", "strength": 0.6 }
+  ],
+  "implicationNote": "strength is the chance that the rule holds. When a drawn sound breaks a rule that holds, the missing sound is added; if the count class is then full, the drawn sound is put back instead.",
+  "gaps": [
+    { "id": "noP", "removes": "p", "weight": 0.06, "note": "WALS 5A: missing /p/." },
+    { "id": "noG", "removes": "g", "weight": 0.06, "note": "WALS 5A: missing /g/ in a voiced series." }
+  ],
+  "liquids": [
+    { "id": "lAndR",   "weight": 0.6,  "note": "One lateral and one rhotic." },
+    { "id": "lOnly",   "weight": 0.15 },
+    { "id": "rOnly",   "weight": 0.1 },
+    { "id": "none",    "weight": 0.15, "note": "WALS 8A: 95 of 567 languages have no lateral." }
+  ],
+  "stress": [
+    { "id": "free",          "weight": 220, "note": "No fixed place. The proto-language draws a place per root and keeps it." },
+    { "id": "initial",       "weight": 92 },
+    { "id": "second",        "weight": 16 },
+    { "id": "antepenultimate","weight": 12 },
+    { "id": "penultimate",   "weight": 110 },
+    { "id": "ultimate",      "weight": 51 }
+  ],
+  "stressNote": "WALS 14A, rounded. Stress is not shown in a spelling. Changes in changes.json use it ([+stress], [-stress]). Tone (WALS 13A) is not in the kit."
+}

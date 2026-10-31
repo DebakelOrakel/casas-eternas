@@ -1,0 +1,108 @@
+{
+  "about": "The grammar of names: the choices each language draws once, and the patterns of names for each kind of place. See README.md.",
+  "sources": [
+    "WALS 87A Order of Adjective and Noun (Dryer): 1366 languages; adjective-noun 373, noun-adjective 879, no dominant order 110.",
+    "WALS 86A Order of Genitive and Noun (Dryer): 1249 languages; genitive-noun 685, noun-genitive 468, no dominant order 96.",
+    "Tent, J. & Blair, D. 2011. Motivations for naming (Names 59(2)): the kinds of name (descriptive, associative, evaluative, commemorative).",
+    "O'Leary, M. 2016. Generating fantasy maps / naming languages (mewo2.com): joiners, a 'word of its own', generic words per kind."
+  ],
+  "slots": {
+    "H": "the head: a word whose meaning has this kind in 'head' (meanings.json)",
+    "A": "an adjective whose meaning has this kind in 'modifier'",
+    "N": "a noun whose meaning has this kind in 'modifier', as a genitive or the first part of a compound",
+    "W": "a word of its own: a new root with no meaning, made in the language's sounds, kept per place",
+    "X": "the name of a near place of another kind (the river at a village, the mountain over a lake), as the namer's people names it",
+    "E": "the language's ending for this kind of place (drawn once per language, see 'endings')",
+    "-": "the joiner between two parts of one word (see 'joiners')",
+    " ": "a space: two words"
+  },
+  "slotNote": "A pattern is written with the modifier first. A language whose order is 'after' puts A (adjOrder) or N and X (genOrder) after H. Context first: the engine fills A and N from what is at the place (river, forest, hill, coast, the colour of the rock …) where it can, and from the meanings at random where it cannot.",
+  "grammar": {
+    "adjOrder": [ { "id": "before", "weight": 373 }, { "id": "after", "weight": 879 } ],
+    "genOrder": [ { "id": "before", "weight": 685 }, { "id": "after", "weight": 468 } ],
+    "compounding": [
+      { "id": "oneWord",  "weight": 3, "note": "modifier and head make one word with the joiner: Whitby-type" },
+      { "id": "twoWords", "weight": 1, "note": "modifier and head stay two words: Rio Grande-type" },
+      { "id": "mixed",    "weight": 1, "note": "one word for N, two words for A" }
+    ],
+    "joiners": [
+      { "id": "none",      "weight": 3, "form": "" },
+      { "id": "vowel",     "weight": 2, "form": "V",  "note": "a vowel of the inventory, drawn once (the Greek -o-, the Germanic -e-)" },
+      { "id": "genitive",  "weight": 2, "form": "VC", "note": "a short genitive ending, drawn once, used with N only" },
+      { "id": "consonant", "weight": 1, "form": "C",  "note": "a single consonant, used only where two vowels meet" }
+    ],
+    "joinerRule": "The joiner stands only where the syllable rules (syllables.json) need it or the language draws it for all compounds. Where two vowels meet and the language does not allow it, the first vowel goes.",
+    "endings": {
+      "chance": { "village": 0.5, "river": 0.35, "mountain": 0.25, "lake": 0.2, "landmass": 0.6, "people": 0.8 },
+      "form": ["V", "VC", "CV", "VCV"],
+      "note": "For each kind, a language draws by 'chance' whether it has an ending; if it has one, it draws a form and fills it from its sounds. The people ending is the most common (Greek -oi, Latin -i, Bantu ba- as a prefix; a prefix is allowed with weight 0.15)."
+    },
+    "articleWithKind": { "weight": 0.25, "note": "A language may name the kind word in front of every river or mountain ('the river W'); then the pattern 'H W' gets weight × 3 for rivers and mountains." }
+  },
+  "patterns": {
+    "village": [
+      { "id": "adjHead",    "form": "A-H",   "weight": 3 },
+      { "id": "nounHead",   "form": "N-H",   "weight": 3, "note": "the commonest: what is there and what the place is (ford, hill, field)" },
+      { "id": "nearHead",   "form": "X-H",   "weight": 2, "note": "named for the river or the hill: X is the near place's name" },
+      { "id": "ownHead",    "form": "W-H",   "weight": 2, "note": "a word of its own and a head: the founder's or an old name" },
+      { "id": "ownEnd",     "form": "W-E",   "weight": 2 },
+      { "id": "adjNoun",    "form": "A-N",   "weight": 1 },
+      { "id": "own",        "form": "W",     "weight": 1 }
+    ],
+    "river": [
+      { "id": "adjHead",    "form": "A-H",   "weight": 2, "note": "the white river" },
+      { "id": "own",        "form": "W",     "weight": 3, "note": "rivers keep old names that no longer mean anything" },
+      { "id": "ownEnd",     "form": "W-E",   "weight": 2 },
+      { "id": "headOwn",    "form": "H W",   "weight": 1 },
+      { "id": "adj",        "form": "A-E",   "weight": 1, "note": "an adjective alone with the river ending: 'the swift one'" },
+      { "id": "nounHead",   "form": "N-H",   "weight": 1 }
+    ],
+    "mountain": [
+      { "id": "adjHead",    "form": "A-H",   "weight": 3, "note": "the white mountain" },
+      { "id": "nounHead",   "form": "N-H",   "weight": 2, "note": "the eagle's peak, the god's mountain" },
+      { "id": "headOwn",    "form": "H W",   "weight": 1 },
+      { "id": "ownEnd",     "form": "W-E",   "weight": 1 },
+      { "id": "body",       "form": "A-H",   "weight": 1, "head": ["head", "back", "tooth", "horn"], "note": "a body word as head: the grey tooth" }
+    ],
+    "lake": [
+      { "id": "adjHead",    "form": "A-H",   "weight": 3 },
+      { "id": "nounHead",   "form": "N-H",   "weight": 2 },
+      { "id": "nearHead",   "form": "X-H",   "weight": 2, "note": "named for its river or a village on its shore" },
+      { "id": "own",        "form": "W",     "weight": 1 }
+    ],
+    "landmass": [
+      { "id": "ownEnd",     "form": "W-E",   "weight": 3, "note": "the land ending: a word of its own and 'land'" },
+      { "id": "peopleHead", "form": "X-H",   "weight": 2, "note": "X is the name of the people there: 'land of the X'" },
+      { "id": "adjHead",    "form": "A-H",   "weight": 2, "note": "the green land, the far land" },
+      { "id": "nounHead",   "form": "N-H",   "weight": 1 }
+    ],
+    "people": [
+      { "id": "ownEnd",     "form": "W-E",   "weight": 3, "note": "a word of its own and the people ending" },
+      { "id": "selfName",   "form": "A-H",   "weight": 2, "a": ["true", "first", "free", "old"], "note": "'the true people': the self-name of many peoples" },
+      { "id": "placeEnd",   "form": "X-E",   "weight": 2, "note": "named for its land, river or mountain" },
+      { "id": "nounEnd",    "form": "N-E",   "weight": 1, "note": "the wolf people, the river people" }
+    ]
+  },
+  "examples": [
+    {
+      "about": "A made language. Its words (in sounds): white /kala/, hill /dun/, ford /sem/, village /tape/; adjOrder before, genOrder before, compounding oneWord, joiner vowel /o/ in all compounds, village ending /-ar/; stress initial.",
+      "names": [
+        { "kind": "mountain", "pattern": "adjHead", "meanings": ["white", "hill"], "sounds": "kala-o-dun → kalodun (two vowels meet: the first goes)", "plain": "Kalodun" },
+        { "kind": "village",  "pattern": "ownEnd",  "word": "/tiv/", "sounds": "tiv-ar", "plain": "Tivar" }
+      ]
+    },
+    {
+      "about": "A second made language, with adjOrder after and compounding twoWords: river /oʃe/, red /biri/; style 'slavic'.",
+      "names": [
+        { "kind": "river", "pattern": "adjHead", "meanings": ["red", "river"], "sounds": "oʃe biri", "slavic": "Oše Biri" }
+      ]
+    },
+    {
+      "about": "A daughter of the first language, after apocope and voicingIntervocalic (changes.json): the recipe stays, the form changes.",
+      "names": [
+        { "kind": "mountain", "pattern": "adjHead", "meanings": ["white", "hill"], "sounds": "kalodun → kalodun (no change: no final vowel, no voiceless stop between vowels)", "plain": "Kalodun" },
+        { "kind": "village", "pattern": "nounHead", "meanings": ["ford", "village"], "sounds": "sem-o-tape → semodabe → semodab", "plain": "Semodab" }
+      ]
+    }
+  ]
+}
