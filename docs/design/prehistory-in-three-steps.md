@@ -663,6 +663,30 @@ Building since 2026-10-27:
   at the end 33.7 → 33.1 M, 9.8 → 13.3 M, 23.5 → 23.7 M; the land farmed
   10.7 → 10.8, 10.1 → 11.1, 9.9 → 9.9 %. The smoke test's sphere tells no
   merge with seed 29 now; seed 5 reaches all.
+- 2026-10-31 (v6 still): the post-glacial rebound (TEG-22;
+  `casas-incubator` climate_history.rs THE REBOUND). The ice pushes the
+  crust down by 0.28 of its thickness (a plastic ice sheet's profile, some
+  3 000 m at 400 km from its margin), and the crust follows the ice with
+  a time constant of 4 000 years (the earth's 3 400 to 4 200). A cell of
+  the ice's land below the sea of its time is sea, in step 1 and step 2:
+  where the ice melts the sea comes in, and the land comes up out of it.
+  No sinking beyond the ice's margin, no peripheral bulge. The land of
+  the former ice under the sea (Morvane, Thalassor, Zephyra): at step 2's
+  start 11 000, 167 000 and 41 000 km²; at its most 58 000 km² at +4 500,
+  629 000 at +3 000, 451 000 at +4 500 (the melt's end); half of it up
+  again 2 000 and 3 500 years later on Thalassor and Zephyra, not before
+  Morvane's history ends; at the histories' ends (origins 514 170, 149 889, 783 702) 31 000 km²
+  left at +7 000, 74 000 at +7 500, 39 000 at +15 000. Step 1 reaches the same land
+  (95.4, 73.0, 84.9 %). Step 2's times over the six origins of each world
+  (medians from step 2's start, before → after; the copper, the smelting,
+  the city): Morvane +3 750 → +4 500, +6 750 → +7 500, +7 500 → +8 750;
+  Thalassor +3 500 → +2 500, +6 500 → +5 500, +8 000 → +7 500; Zephyra
+  +13 000 → +13 000, +16 000 → +15 500, +16 500 → +16 500. The rebound
+  floods land no one lives in yet (the ice left it), and it moves the
+  histories by their draws: the land farmed and the people at the end
+  hardly change. The incubator's map draws the coast by the sea's drop
+  alone: it does not show the sunk land. The smoke test's sphere reaches
+  no herding centre and no told merge with seed 5 now; seed 4 reaches all.
 
 Open:
 

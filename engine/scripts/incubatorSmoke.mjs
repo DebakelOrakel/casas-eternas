@@ -159,8 +159,10 @@ function synthWorld(kind) {
     // history costs about the same as 12345's (both run 100 000 years).
     // Since the dry shelf carries its own ecology (TEG-13, 2026-10-30),
     // seed 29 tells no merge; of the seeds 1 to 12 only 5 and 6 reach all
-    // three.
-    seed: kind === 'sphere' ? 5 : 12345,
+    // three. Since the post-glacial rebound (TEG-22, 2026-10-31) seed 5
+    // and 6 give no herding centre and no told merge; of the seeds 1 to 14
+    // only 4 reaches all three.
+    seed: kind === 'sphere' ? 4 : 12345,
   }
 }
 
@@ -378,7 +380,8 @@ for (const kind of ['torus', 'sphere']) {
 // TOLD_LIVES_YEARS. With seed 12345 neither world told one, and only the
 // torus reached a herding centre ('centre 3'); the sphere's seed 29 told
 // one of each and reached a herding centre, so the three were in again
-// (2026-10-30, TEG-99); seed 5 since the dry shelf's ecology (TEG-13). Also in peoples.rs
+// (2026-10-30, TEG-99); seed 5 since the dry shelf's ecology (TEG-13), seed 4
+// since the post-glacial rebound (TEG-22). Also in peoples.rs
 // `a_split_is_told_once_it_held` and
 // `the_tree_keeps_ids_and_records_splits_and_merges`.
 const reaches = ['departure', 'trade', 'crossing', 'centre 3', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleSplit', 'peopleMerged', 'peopleGone', 'peopleFarmers', 'goods']

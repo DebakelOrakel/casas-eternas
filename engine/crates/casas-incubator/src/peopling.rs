@@ -7,7 +7,9 @@
 //!
 //! A search by time over all cells. Over dry ground the front moves at the
 //! simulation's speeds (`ground_of`). The shelf is dry ground while the sea
-//! is below it, the cold lands while the ice is away from them: a way that
+//! is below it, the cold lands while the ice is away from them and the
+//! crust it pushed down is above the sea (climate_history.rs THE
+//! REBOUND): a way that
 //! is closed now is taken when it opens, so the front waits on its edge.
 //! Over water people go by boat, as far over open sea (km out of sight of
 //! any dry ground) as the time's reach, which grows from REACH_START_KM to
@@ -35,7 +37,7 @@
 //!
 //! Step 2 starts from it, so it is part of H1 and of the tuning.
 
-use crate::climate_history::{ClimateHistory, ICE_REACH_KM, SEA_DROP_M, ice_may_cover};
+use crate::climate_history::{ClimateHistory, ICE_REACH_KM, Rebound, SEA_DROP_M, ice_may_cover};
 use crate::habitat::Habitat;
 use crate::log::LogEvent;
 use crate::simulation::{CLIMATE_YEARS, Ground, SPAN_YEARS, ground_of, ice_distance};
@@ -168,11 +170,21 @@ pub fn people(
     } = ground_of(h, carrying);
     let ice_km = ice_distance(h);
     let iced = |i: usize| ice_may_cover(h.koppen[i]) && ice_km[i] < f32::INFINITY;
+    // The crust the ice pushed down (climate_history.rs THE REBOUND).
+    let rebound = Rebound::of(&history, span, CLIMATE_YEARS);
 
     // Dry ground at the sample `k`, which the front walks.
     let dry_at = |i: usize, k: usize| -> bool {
         if h.land[i] != 0 {
-            base[i] > 0.0 && !(iced(i) && ice_km[i] as f64 <= climate.ice_km[k])
+            base[i] > 0.0
+                && !(iced(i)
+                    && (ice_km[i] as f64 <= climate.ice_km[k]
+                        || rebound.sunk(
+                            ice_km[i] as f64,
+                            h.height_m[i] as f64,
+                            climate.drop_m[k],
+                            k as f64 * CLIMATE_YEARS,
+                        )))
         } else {
             shelf[i] != 0 && h.sea_depth_m[i] as f64 <= climate.drop_m[k]
         }

@@ -56,9 +56,24 @@
 //! DRYING_FAST_YEARS; toward its equatorward edge later (DRYING_LAG_YEARS
 //! more) and slower (DRYING_SLOW_YEARS). simulation.rs THE LAND DRYING
 //! applies it, the rivers' cells excepted.
+//!
+//! THE REBOUND (2026-10-31, TEG-22; the post-glacial rebound): the ice
+//! pushes the crust down, and the crust comes up again slowly after the
+//! ice melts. The ice is thickest far inside its margin: a cell `ice_km`
+//! from today's glaciers, under an ice that reaches ICE_REACH_KM × cold,
+//! carries ice of sqrt(ICE_PROFILE_M × the km to the margin in m) (the
+//! plastic ice sheet's profile). The crust sinks toward ICE_SINK of that
+//! thickness and follows it with the time constant REBOUND_YEARS, after
+//! the ice and before it (`Rebound`). The depression is below today's
+//! crust: today it is 0. A cell sunk below the sea of its time is sea
+//! (peopling.rs `dry_at`, simulation.rs THE CLIMATE): where the ice
+//! melts, the sea comes into the land it freed, and the land comes up out
+//! of it over some thousands of years, as the Baltic's and Hudson Bay's
+//! coasts did. Only the ice's cells sink (`ice_may_cover`, within
+//! ICE_REACH_KM): no sinking beyond the margin and no peripheral bulge.
 
 use casas_generator::climate::koppen::KOPPEN_CODES;
-use casas_generator::core::det_math::{det_cos, det_pow, det_sin};
+use casas_generator::core::det_math::{det_cos, det_exp, det_pow, det_sin};
 use casas_generator::core::js;
 use casas_generator::core::rng::Mulberry32;
 use std::f64::consts::PI;
@@ -135,6 +150,40 @@ pub(crate) const HUMID_DESERT_CARRYING: f64 = 0.3;
 pub(crate) const HUMID_DESERT_PASTURE: f64 = 0.4;
 pub(crate) const HUMID_STEPPE_CARRYING: f64 = 0.15;
 pub(crate) const HUMID_STEPPE_PASTURE: f64 = 0.0;
+// THE REBOUND. The earth's numbers:
+// - The ice's profile: a perfectly plastic ice sheet on a flat bed has the
+//   thickness H = sqrt(2 τ0 x / (ρi g)) at x from its margin (Nye 1952,
+//   J. Glaciol. 2(12); Cuffey and Paterson 2010, The Physics of Glaciers,
+//   4th ed., ch. 8). With the basal shear stress τ0 = 100 kPa (50 to
+//   150 kPa for the ice sheets) and ρi = 917 kg/m³, 2 τ0 / (ρi g) = 22 m:
+//   ICE_PROFILE_M. At 400 km from the margin (ICE_REACH_KM at cold 1) the
+//   ice is some 3 000 m thick, as the Laurentide and the Fennoscandian
+//   ice at their centres (some 3 000 m; Peltier 2004, Annu. Rev. Earth
+//   Planet. Sci. 32, ICE-5G).
+// - The depression in isostatic equilibrium: ρi / ρm of the ice's
+//   thickness, with the mantle's density ρm = 3 300 kg/m³ (Turcotte and
+//   Schubert 2002, Geodynamics, 2nd ed., ch. 6): 917 / 3 300 = 0.28, some
+//   a third: ICE_SINK. Under 3 000 m of ice, 830 m.
+// - The time constant: the uplift after the melt falls about as
+//   exp(−t / τ), with τ some 3 400 years in the southeast of Hudson Bay
+//   and 4 200 years in the Gulf of Bothnia (Peltier 2004; Mitrovica and
+//   Peltier 1995, Geophys. J. Int. 122, read the Hudson Bay records the
+//   same way; the values from Peltier 2004 as cited, not verified in the
+//   paper itself): REBOUND_YEARS 4 000. The crust lags the ice the same
+//   way when it grows.
+// - What follows on the earth: the highest shoreline at the Höga Kusten
+//   (Sweden) stands 286 m above today's sea (UNESCO World Heritage 898,
+//   2000), and the sea over southeast Hudson Bay fell some 250 m in the
+//   last 9 000 years (Peltier 2004); both still rise some 10 mm a year
+//   (Sella et al. 2007, Geophys. Res. Lett. 34, L02306; from memory, not
+//   verified).
+// The ice's margin is ICE_REACH_KM × cold from today's glaciers (simulation.rs
+// `ice_distance`); a cell sinks by the ice over it, not by its
+// neighbours' (no flexure). The depression is kept every CLIMATE_YEARS
+// (`Rebound::of`'s `step`) by the km from today's glaciers, km by km.
+pub(crate) const ICE_PROFILE_M: f64 = 22.0;
+pub(crate) const ICE_SINK: f64 = 0.28;
+pub(crate) const REBOUND_YEARS: f64 = 4000.0;
 
 struct Swing {
     period: f64,
@@ -216,6 +265,75 @@ impl ClimateHistory {
     /// Whether the climate has been warm and calm for STABLE_YEARS by `t`.
     pub fn stable(&self, t: f64) -> bool {
         self.cold(t) < STABLE_COLD && self.cold(t - STABLE_YEARS) < STABLE_COLD
+    }
+}
+
+/// The crust's depression under the ice and after it (THE REBOUND), m
+/// below today's, by the km from today's glaciers (0 … ICE_REACH_KM, km by
+/// km) and the time (every `step` years from 0).
+pub struct Rebound {
+    step: f64,
+    // A row a `step`, ICE_REACH_KM + 1 values a row.
+    rows: Vec<f32>,
+    bins: usize,
+}
+
+impl Rebound {
+    /// The depression from 0 to `span` years every `step`: at 0 in
+    /// equilibrium with the ice, then toward it with REBOUND_YEARS, the
+    /// ice of each `step` at its middle.
+    pub fn of(history: &ClimateHistory, span: f64, step: f64) -> Self {
+        let samples = (span / step).ceil() as usize + 1;
+        let bins = ICE_REACH_KM as usize + 1;
+        // The equilibrium at the cold `c`, `km` from today's glaciers.
+        let settled = |c: f64, km: f64| -> f64 {
+            let inside_km = ICE_REACH_KM * c - km;
+            if inside_km <= 0.0 {
+                0.0
+            } else {
+                ICE_SINK * (ICE_PROFILE_M * inside_km * 1000.0).sqrt()
+            }
+        };
+        let keep = det_exp(-step / REBOUND_YEARS);
+        let mut rows = vec![0f32; samples * bins];
+        let c0 = history.cold(0.0);
+        let mut now: Vec<f64> = (0..bins).map(|km| settled(c0, km as f64)).collect();
+        for k in 0..samples {
+            if k > 0 {
+                let c = history.cold((k as f64 - 0.5) * step);
+                for (km, d) in now.iter_mut().enumerate() {
+                    let goal = settled(c, km as f64);
+                    *d = goal + (*d - goal) * keep;
+                }
+            }
+            for (km, &d) in now.iter().enumerate() {
+                rows[k * bins + km] = d as f32;
+            }
+        }
+        Rebound { step, rows, bins }
+    }
+
+    /// The depression at `t` (the last `step` at or before it) of a cell
+    /// `ice_km` from today's glaciers, m; 0 beyond ICE_REACH_KM.
+    pub fn depression_m(&self, ice_km: f64, t: f64) -> f64 {
+        if ice_km.is_nan() || ice_km > ICE_REACH_KM {
+            return 0.0;
+        }
+        let bins = self.bins;
+        let samples = self.rows.len() / bins;
+        let k = ((js::max(0.0, t) / self.step).floor() as usize).min(samples - 1);
+        let row = &self.rows[k * bins..(k + 1) * bins];
+        let lo = ice_km.floor() as usize;
+        let hi = (lo + 1).min(bins - 1);
+        let f = ice_km - lo as f64;
+        row[lo] as f64 + (row[hi] as f64 - row[lo] as f64) * f
+    }
+
+    /// Whether a cell is under the sea at `t` by its depression: land of
+    /// `height_m` above today's sea, or a shelf `-height_m` deep, with the
+    /// sea `drop_m` below today's.
+    pub fn sunk(&self, ice_km: f64, height_m: f64, drop_m: f64, t: f64) -> bool {
+        height_m - self.depression_m(ice_km, t) < -drop_m
     }
 }
 
@@ -342,6 +460,32 @@ mod tests {
             }
             assert_eq!(spell_cold(&starts, t0), 0.0);
             assert_eq!(spell_cold(&starts, starts[0]), COLD_SPELL_COLD);
+        }
+    }
+
+    #[test]
+    fn the_crust_sinks_under_the_ice_and_comes_up_after_it() {
+        for seed in 0..50 {
+            let history = ClimateHistory::of(seed as f64, 100_000.0);
+            let rebound = Rebound::of(&history, 100_000.0, 500.0);
+            let melted = history.max_at + history.deglaciation;
+            // Deepest near today's glaciers; none beyond the ice's reach.
+            let deep = rebound.depression_m(0.0, history.max_at);
+            assert!(deep > 300.0 && deep < ICE_SINK * 3000.0, "{deep}");
+            assert!(rebound.depression_m(200.0, history.max_at) < deep);
+            assert_eq!(rebound.depression_m(f64::INFINITY, history.max_at), 0.0);
+            assert_eq!(
+                rebound.depression_m(ICE_REACH_KM + 1.0, history.max_at),
+                0.0
+            );
+            // Still down when the ice is gone, then up with REBOUND_YEARS.
+            let at_melt = rebound.depression_m(0.0, melted);
+            assert!(at_melt > 0.1 * deep, "{at_melt} of {deep}");
+            let later = rebound.depression_m(0.0, melted + REBOUND_YEARS);
+            assert!((later / at_melt - det_exp(-1.0)).abs() < 0.05);
+            // Land 50 m high near the glaciers is sea at the melt, land later.
+            assert!(rebound.sunk(0.0, 50.0, 0.0, melted));
+            assert!(!rebound.sunk(0.0, 50.0, 0.0, melted + 5.0 * REBOUND_YEARS));
         }
     }
 

@@ -51,7 +51,9 @@ use serde_json::{Map, Value, json};
 /// the shelf as land, not what its coast carries (simulation.rs
 /// `ground_of`, TEG-13, 2026-10-30); the origin when none is given on
 /// the landmass from which step 1 reaches the most land (history.rs
-/// `origin_of`, TEG-7, 2026-10-31).
+/// `origin_of`, TEG-7, 2026-10-31); the post-glacial rebound: the land
+/// the ice pushed down is sea until it comes up again, in step 1 and step
+/// 2 (climate_history.rs THE REBOUND, TEG-22, 2026-10-31).
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
@@ -90,7 +92,8 @@ pub fn constants() -> Value {
         "climate": object(table!(climate_history: SEA_DROP_M, STADIALS, STABLE_COLD, STABLE_YEARS, ICE_REACH_KM,
             COLD_SPELLS_MOST, COLD_SPELL_YEARS, COLD_SPELL_COLD, COLD_SPELL_DRY, COLD_SPELL_FROM, COLD_SPELL_TO,
             DRYING_LAT_FROM, DRYING_LAT_TO, DRYING_FROM, DRYING_TO, DRYING_LAG_YEARS, DRYING_FAST_YEARS, DRYING_SLOW_YEARS,
-            HUMID_DESERT_CARRYING, HUMID_DESERT_PASTURE, HUMID_STEPPE_CARRYING, HUMID_STEPPE_PASTURE)),
+            HUMID_DESERT_CARRYING, HUMID_DESERT_PASTURE, HUMID_STEPPE_CARRYING, HUMID_STEPPE_PASTURE,
+            ICE_PROFILE_M, ICE_SINK, REBOUND_YEARS)),
         "habitat": object(table!(habitat: CELL_SPACING_KM)),
         "niche": object(table!(niche: SUITABLE, BARRIER, SPREAD_KM, ORIGIN_AREA_KM2, OFF_COVER, BIG_RIVER)),
         "travel": object(table!(travel: WALK_HOURS, RIVER_BOAT_SIZE, RIVER_DOWN_KM_DAY, RIVER_UP_KM_DAY, COAST_DEPTH_M, COAST_KM_DAY, LANDING_DAYS)),

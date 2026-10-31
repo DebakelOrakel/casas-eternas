@@ -11,7 +11,9 @@
 //! A STEP:
 //! 0. THE CLIMATE (climate_history.rs), every CLIMATE_YEARS: the cold
 //!    lowers what the land carries and puts the land near today's glaciers
-//!    under the ice; the sea's drop lays the shelf to it dry, to SHELF_M. A
+//!    under the ice; the sea's drop lays the shelf to it dry, to SHELF_M;
+//!    the land the ice pushed down is sea while it is below the sea
+//!    (climate_history.rs THE REBOUND). A
 //!    cell that carries nothing any more is left, its people go to the
 //!    neighbours (THE RISING SEA); one that carries again may be settled
 //!    again. A cold spell (climate_history.rs THE COLD SPELLS) moves what
@@ -46,8 +48,8 @@
 //! It ends at its first city.
 
 use crate::climate_history::{
-    COLD_SPELL_DRY, COLD_SPELL_YEARS, ClimateHistory, ICE_REACH_KM, cold_share, cold_spells,
-    drying_start, humid_gain, ice_may_cover, spell_cold, wetness,
+    COLD_SPELL_DRY, COLD_SPELL_YEARS, ClimateHistory, ICE_REACH_KM, Rebound, cold_share,
+    cold_spells, drying_start, humid_gain, ice_may_cover, spell_cold, wetness,
 };
 use crate::habitat::{ARABLE, COPPER, FISH, Habitat, PASTURE, km_between, latitude_deg};
 use crate::log::{LogEvent, POPULATION_MARKS};
@@ -1373,6 +1375,8 @@ pub fn simulate(
         coast,
     } = ground_of(h, input.carrying);
     let ice_km = ice_distance(h);
+    // The crust the ice pushed down (climate_history.rs THE REBOUND).
+    let rebound = Rebound::of(&climate, SPAN_YEARS, CLIMATE_YEARS);
     // THE LAND DRYING: the dry belt's cells (`humid`; 2 where a river keeps
     // them wet), what they carry at wetness 1, where its drying begins.
     let mut humid = vec![0u8; n];
@@ -1443,6 +1447,8 @@ pub fn simulate(
                 } else {
                     0.0
                 }
+            } else if rebound.sunk(ice_km[i] as f64, h.height_m[i] as f64, drop, t) {
+                0.0
             } else {
                 base_now * cold_share(h.koppen[i], ice_km[i] as f64, cold, spell)
             };
