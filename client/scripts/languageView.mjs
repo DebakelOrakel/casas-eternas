@@ -9,9 +9,13 @@
 //    through its WASM build: TEG-138): at every kept state the speakers of
 //    the families together are the people of the peoples; a family's are
 //    its languages' and its proto-language's; a language has none before
-//    it arose; a dialect dies out exactly at its people's end in the log
-//    (peopleGone, peopleMerged, peopleReplaced), a language at its
-//    languageGone, a family and its proto-language at its familyGone. The
+//    it arose; at every kept state a language or a dialect has speakers
+//    exactly where it lives then (born, not †): it dies out at the last
+//    end of the peoples that speak it, not at its people's end in the log
+//    alone (the log tells the big peoples' ends only, and no language
+//    whose speakers took a daughter of it), at its people's told end
+//    where no other people speaks it, at its languageGone where told; a
+//    family and its proto-language at its familyGone. The
 //    peoples are made here, seeded: a real tree needs a world and a
 //    history run (minutes), and the languages read only the tree's
 //    arrays. Needs `make engine` (engine/dist/incubator).
@@ -52,7 +56,11 @@
 //    on the trees of 1., a cell for each people at each kept state: every
 //    such cell is painted, in a shade of its family's hue; a node chosen
 //    in the panel makes its cells stand out, and their people are exactly
-//    the view's speakers of it then.
+//    the view's speakers of it then. The map's kept state at a time
+//    (peopleShared.ts keptIndex) is the panel's (languageTypes.ts
+//    sampleAt), at the history's end too: its end is no step of
+//    KEEP_YEARS from its start, and the map showed the state before the
+//    last there while the panel showed the last (2026-10-31, Morvane).
 import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -70,6 +78,7 @@ const M = {
   types: await L('/src/ui/languagePanel/languageTypes.ts'),
   compare: await L('/src/ui/languagePanel/languageCompare.ts'),
   overlay: await L('/src/screens/incubator/incubatorOverlay.ts'),
+  shared: await L('/src/screens/incubator/peopleShared.ts'),
 }
 
 // The incubator's WASM build (engine/dist/incubator, `make engine`).
@@ -134,11 +143,12 @@ function makeHistory(seed) {
         const kind = r < 0.35 ? 'peopleGone' : r < 0.39 ? 'peopleMerged' : 'peopleReplaced'
         if (kind !== 'peopleGone' && others.length === 0) continue
         const into = kind === 'peopleGone' ? -1 : others[Math.floor(draw() * others.length)].id
+        // In whole years, as the tree keeps it (f32).
+        const when = Math.round(at(0.1 + 0.8 * draw()))
         p.alive = false
-        p.ended = times[k + 1]
+        p.ended = when
         p.mergedInto = into
         if (into >= 0) peoples[into].count += p.count
-        const when = at(0.1 + 0.8 * draw())
         if (p.big) log.push(kind === 'peopleGone' ? { kind, at: when, cell: 0, people: id, count: 1, km2: 1 } : { kind, at: when, cell: 0, people: id, into, count: 1, km2: 1 })
       }
     }
@@ -204,6 +214,13 @@ function languagesOf(history, seed) {
   return { languages: { tree: packed, made }, events: out.log, lexicon: out.lexicon }
 }
 
+// The end of each people the log tells, by people id.
+function peopleEnds(log) {
+  const ends = new Map()
+  for (const e of log) if (e.kind === 'peopleGone' || e.kind === 'peopleMerged' || e.kind === 'peopleReplaced') ends.set(e.people, e.at)
+  return ends
+}
+
 console.log('1. the adapter (languageView.ts) on the crate\'s languages (its WASM build)')
 for (const seed of [1, 7, 2840]) {
   const made = makeHistory(seed)
@@ -248,33 +265,51 @@ for (const seed of [1, 7, 2840]) {
   }
   check(`seed ${seed}: a language has no speakers before it arose`, early === '', early)
 
-  // The dialects die out at their people's end in the log, and only there.
-  const ends = M.view.peopleEnds(log)
+  // A language or a dialect has speakers at a kept state exactly where it
+  // lives then (born, not †).
+  let living = ''
+  for (const node of [...proper, ...ofLevel('dialect')]) {
+    for (let k = 0; k < view.times.length; k++) {
+      const t = view.times[k]
+      const lives = node.born <= t && !(node.ended !== null && node.ended <= t)
+      if (lives !== node.speakers[k] > 0) living ||= `${node.id} at ${t}: born ${node.born}, † ${node.ended}, ${node.speakers[k]} speakers`
+    }
+  }
+  check(`seed ${seed}: at every kept state a language or a dialect has speakers exactly where it lives`, living === '', living)
+  // A dialect dies out at its people's end in the log where its people
+  // alone speaks it, and not before it.
+  const ends = peopleEnds(log)
   let wrong = ''
   let told = 0
+  let alone = 0
   for (let p = 0; p < peopleCount; p++) {
     if (!tree.big[p]) continue
     const dialect = ofLevel('dialect').find((d) => d.peoples.length === 1 && d.peoples[0] === p)
     if (!dialect) { wrong ||= `people ${p}: no dialect`; continue }
     const end = ends.get(p) ?? null
-    if (end !== null) told++
-    if (dialect.ended !== end) wrong ||= `people ${p}: † ${dialect.ended}, its end ${end}`
+    if (end === null) continue
+    told++
+    const k = Number(dialect.id.slice(1))
+    const speakers = languages.tree.peopleLanguage.reduce((n, at) => n + Number(at === k), 0)
+    if (speakers === 1) alone++
+    if (speakers === 1 ? dialect.ended !== end : dialect.ended !== null && dialect.ended < end) wrong ||= `people ${p}: † ${dialect.ended}, its end ${end} (${speakers} peoples speak it)`
   }
-  check(`seed ${seed}: each big people's dialect ends exactly at its end event (${told} told)`, wrong === '' && told > 0, wrong)
-  // The languages and the families die out at their log events, and only
-  // there; a language gone is spoken no more after it.
+  check(`seed ${seed}: a big people's dialect ends at its end event where it alone speaks it, not before it (${told} told, ${alone} alone)`, wrong === '' && alone > 0, wrong)
+  // The languages die out at their log events where told, and the
+  // families at theirs, and only there; a language gone is spoken no more
+  // after it.
   let gone = ''
   const languageGone = new Map(events.filter((e) => e.kind === 'languageGone').map((e) => [`l${e.language}`, e.at]))
   const familyGone = new Map(events.filter((e) => e.kind === 'familyGone').map((e) => [`f${e.family}`, e.at]))
   for (const node of proper) {
-    if (node.ended !== (languageGone.get(node.id) ?? null)) gone ||= `${node.id}: † ${node.ended}, its event ${languageGone.get(node.id)}`
+    if (languageGone.has(node.id) && node.ended !== languageGone.get(node.id)) gone ||= `${node.id}: † ${node.ended}, its event ${languageGone.get(node.id)}`
     if (node.ended !== null) for (let k = 0; k < view.times.length; k++) if (view.times[k] > node.ended && node.speakers[k] > 0) gone ||= `${node.id}: speakers after its †`
   }
   for (const node of families) {
     const end = familyGone.get(node.id) ?? null
     if (node.ended !== end || byId.get(`${node.id}p`).ended !== end) gone ||= `${node.id}: † ${node.ended}, its event ${end}`
   }
-  check(`seed ${seed}: a language, a family and its proto-language end at their log events (${languageGone.size} and ${familyGone.size})`, gone === '', gone)
+  check(`seed ${seed}: a language told gone, a family and its proto-language end at their log events (${languageGone.size} and ${familyGone.size})`, gone === '', gone)
   check(`seed ${seed}: every big people speaks one dialect and is counted in its family`, families.reduce((s, f) => s + f.peoples.length, 0) === bigCount)
   check(`seed ${seed}: each node is born by its parent`, view.nodes.every((n) => n.parent === null || n.born >= byId.get(n.parent).born))
   check(`seed ${seed}: each language has a detail, each node and people a name`, ofLevel('language').every((n) => view.detail(n.id) !== null) && view.nodes.every((n) => n.name !== '') && Array.from({ length: peopleCount }, (_, p) => view.peopleName(p)).every((s) => s !== ''))
@@ -561,7 +596,23 @@ for (const seed of [1, 7]) {
   let unpainted = ''
   let chosenWrong = ''
   let chosenTried = 0
-  for (const k of [Math.floor(view.times.length / 2), view.times.length - 1]) {
+  // The map's kept state at a time is the panel's sample, every 250 years
+  // and at the end.
+  const { start, end } = history
+  let sameState = ''
+  for (let year = start - 1000; year <= end + 1000; year += 250) {
+    for (const t of year < end && year + 250 > end ? [year, end] : [year]) {
+      const map = M.shared.keptIndex(start, end, t)
+      const panel = M.types.sampleAt(view.times, t)
+      if (map !== panel) sameState ||= `year ${t}: the map's state ${map}, the panel's ${panel}`
+    }
+  }
+  check(`seed ${seed}: the map shows the kept state the panel counts (to its end at ${end})`, sameState === '', sameState)
+  for (const year of [view.times[Math.floor(view.times.length / 2)], end]) {
+    // The state the map shows then (IncubatorScreen frameIndex), and the
+    // panel's sample.
+    const k = M.shared.keptIndex(start, end, year)
+    const sample = M.types.sampleAt(view.times, year)
     // A cell for each people living at state k, in a row; a raster of one
     // texel a cell, two rows high, so every texel has a neighbour.
     const rows = []
@@ -581,7 +632,7 @@ for (const seed of [1, 7]) {
     }
     // Each node spoken then, chosen: its cells stand out, the rest fade.
     for (const node of view.nodes) {
-      if (!(node.speakers[k] > 0)) continue
+      if (!(node.speakers[sample] > 0)) continue
       const chosen = M.view.speakersOf(ltree, node.id)
       const c = raster()
       M.overlay.paintLanguages(c, ids, NONE, spoken, colours, chosen)
@@ -589,7 +640,7 @@ for (const seed of [1, 7]) {
       for (let t = 0; t < width; t++) if (c.data[4 * t + 3] > 0.8 * 255) people += rows[t].people
       else if (c.data[4 * t + 3] > 0.3 * 255) chosenWrong ||= `${node.id} at ${k}: a texel neither chosen nor faded`
       chosenTried++
-      if (!near(people, node.speakers[k])) chosenWrong ||= `${node.id} at ${k}: ${people} people stand out, ${node.speakers[k]} speak it`
+      if (!near(people, node.speakers[sample])) chosenWrong ||= `${node.id} in ${year}: ${people} people stand out, ${node.speakers[sample]} speak it`
     }
   }
   check(`seed ${seed}: every lived cell at a kept state is painted in its family's hue`, unpainted === '', unpainted)

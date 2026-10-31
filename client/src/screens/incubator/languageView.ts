@@ -24,10 +24,13 @@ import type { PeoplesWithoutIds } from './incubatorWorker'
 //   language arose from it speaks, before that, the language it came from
 //   (the tree's `at`). So the speakers of the families together are the
 //   people of the peoples.
-// - A dialect is extinct where its people's end is told (the log's
-//   peopleGone, peopleMerged, peopleReplaced: `at`); a language where the
-//   log says it is gone (languageGone), a family and its proto-language
-//   where the log says the family is (familyGone).
+// - A language or a dialect is extinct from the last end (the peoples'
+//   tree's `ended`) of the peoples that speak it or a node below it, once
+//   all of them ended; a family and its proto-language where the log says
+//   the family is (familyGone). Not the log's ends for the languages and
+//   the dialects (until 2026-10-31): the log tells the ends of the big
+//   peoples only, and no language gone whose last speakers took a
+//   daughter of it, so a node with no speakers left showed as living.
 //
 // Incubator-only, as the peoples are. When the languages are kept with a
 // world, their loading goes to world/ and this derivation stays here.
@@ -148,15 +151,6 @@ export function keptTimes(start: number, end: number): Float32Array {
   return Float32Array.from({ length: count }, (_, k) => Math.min(end, start + k * KEEP_YEARS))
 }
 
-// The end of each people the log tells, by people id.
-export function peopleEnds(log: readonly LogEvent[]): Map<number, number> {
-  const ends = new Map<number, number>()
-  for (const e of log) {
-    if (e.kind === 'peopleGone' || e.kind === 'peopleMerged' || e.kind === 'peopleReplaced') ends.set(e.people, e.at)
-  }
-  return ends
-}
-
 // The view's id of a tree node; a family's proto-language's.
 const LEVEL_NAMES: LanguageLevel[] = ['family', 'language', 'dialect']
 const viewId = (tree: LanguagesTree, k: number): string => `${LEVEL_NAMES[tree.level[k]][0]}${k}`
@@ -214,14 +208,9 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
   const { tree, made } = history.languages
   const times = keptTimes(history.start, history.end)
   const count = tree.parent.length
-  // The ends the log tells.
-  const peopleEnd = peopleEnds(log)
-  const languageEnd = new Map<number, number>()
+  // The families' ends the log tells.
   const familyEnd = new Map<number, number>()
-  for (const e of log) {
-    if (e.kind === 'languageGone') languageEnd.set(e.language, e.at)
-    else if (e.kind === 'familyGone') familyEnd.set(e.family, e.at)
-  }
+  for (const e of log) if (e.kind === 'familyGone') familyEnd.set(e.family, e.at)
   // The nodes, the tree's order; a family's proto-language after it.
   const nodes: (Omit<LanguageNode, 'speakers' | 'peoples'> & { speakers: Float32Array; peoples: number[] })[] = []
   const position = new Map<string, number>()
@@ -237,20 +226,34 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
       add({ id: viewId(tree, k), level: 'family', parent: null, name, proto: false, born: tree.from[k], ended })
       add({ id: protoId(k), level: 'language', parent: viewId(tree, k), name, proto: true, born: tree.from[k], ended })
     } else if (level === LANGUAGE_LEVEL.language) {
-      add({ id: viewId(tree, k), level: 'language', parent: viewId(tree, familyOf(tree, k)), name, proto: false, born: tree.at[k], ended: languageEnd.get(k) ?? null })
+      add({ id: viewId(tree, k), level: 'language', parent: viewId(tree, familyOf(tree, k)), name, proto: false, born: tree.at[k], ended: null })
     } else {
       const parent = spokenId(tree, tree.parent[k])
       const born = Math.max(tree.from[k], nodes[position.get(parent)!].born)
-      add({ id: viewId(tree, k), level: 'dialect', parent, name, proto: false, born, ended: peopleEnd.get(tree.people[k]) ?? null })
+      add({ id: viewId(tree, k), level: 'dialect', parent, name, proto: false, born, ended: null })
     }
   }
   const parentOf = nodes.map((n) => (n.parent === null ? -1 : position.get(n.parent) ?? -1))
-  // The speakers and the big peoples.
+  // The speakers and the big peoples; by node the last year spoken
+  // (Infinity while spoken at the history's end).
+  const lastSpoken = new Float64Array(nodes.length).fill(-Infinity)
+  const spokenUntil = (from: number, until: number): void => {
+    for (let at = from; at >= 0; at = parentOf[at]) lastSpoken[at] = Math.max(lastSpoken[at], until)
+  }
   const peopleCount = peoplesTree.parent.length
   for (let p = 0; p < peopleCount; p++) {
     const k = tree.peopleLanguage[p]
     if (k < 0) continue
     const own = position.get(nodeIdOf(tree, k))!
+    // Its node from its birth to its end; a people whose language arose
+    // from it the one it came from until then (spokenNode).
+    const ended = peoplesTree.ended[p]
+    const before = spokenNode(tree, p, -Infinity)
+    if (before !== k) {
+      const language = tree.level[k] === LANGUAGE_LEVEL.dialect ? tree.parent[k] : k
+      spokenUntil(position.get(nodeIdOf(tree, before))!, Math.min(ended, tree.at[language]))
+    }
+    spokenUntil(own, ended)
     for (let r = peoplesTree.frameStart[p]; r < peoplesTree.frameStart[p + 1]; r++) {
       const f = peoplesTree.frame[r]
       if (f >= times.length) continue
@@ -260,6 +263,10 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
       for (let at = at0; at >= 0; at = parentOf[at]) nodes[at].speakers[f] += peoplesTree.people[r]
     }
     if (peoplesTree.big[p]) for (let at = own; at >= 0; at = parentOf[at]) nodes[at].peoples.push(p)
+  }
+  for (let at = 0; at < nodes.length; at++) {
+    const node = nodes[at]
+    if (node.level !== 'family' && !node.proto && Number.isFinite(lastSpoken[at])) node.ended = lastSpoken[at]
   }
   // THE NAMES by the view's node: each name under the node of each entry
   // of its chain and every node above it, in the order given; listed in a

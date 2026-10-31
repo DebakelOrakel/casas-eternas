@@ -56,7 +56,7 @@ import { decodeFineValue, ECOLOGY_FIELD_IDS, ECOLOGY_FINE_OCEAN, type EcologyFie
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
 import { levelTemperatureYear, type LevelLand } from '../../world/meshArtifacts'
 import { POPULATION_STEP, type AnimalLayer, type PeopleResult, type PlantLayer, type SettleResult, type TreeLayer } from './cellsShared'
-import { KEEP_YEARS, SPAN_YEARS } from './peopleShared'
+import { keptIndex, KEEP_YEARS, SPAN_YEARS } from './peopleShared'
 import { flowAt, routeOrder, routesOf, type RouteLine } from './peopleArrows'
 import type { LogEvent } from './historyLogShared'
 import { CAME_STEP, clearedAt, clearedOf, densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
@@ -1683,8 +1683,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return historyTime ? Math.ceil((historyTime.end - historyTime.start) / KEEP_YEARS) : 0
   }
   function frameIndex(): number {
-    const start = historyTime?.start ?? 0
-    return Math.max(0, Math.min(lastFrame(), Math.floor((peopleTime - start) / KEEP_YEARS)))
+    return historyTime ? keptIndex(historyTime.start, historyTime.end, peopleTime) : 0
   }
   function livingNow(): Float32Array | null {
     const before = frameNow()
