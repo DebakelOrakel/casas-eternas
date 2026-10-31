@@ -191,13 +191,14 @@ jobs:
         # the one `pipelineVersion` (world/levels.ts); Ln the tiles of
         # level n.
         run: |
-          # The highlights: the annotated tag's message, without a
-          # signature (a lightweight tag gives none, and the notes start
-          # with the table).
+          # The highlights: the annotated tag's message without its title
+          # line, the blank line after it and a signature. The title is for
+          # GitHub's tag page, which shows the first line as its heading. A
+          # lightweight tag gives none, and the notes start with the table.
           obj=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.type + " " + .object.sha')
           if [ "${obj%% *}" = tag ]; then
             gh api "repos/$GITHUB_REPOSITORY/git/tags/${obj#* }" --jq .message \
-              | sed '/^-----BEGIN /,$d' > highlights.md
+              | sed -e '/^-----BEGIN /,$d' -e '1d' -e '2{/^$/d;}' > highlights.md
           else
             : > highlights.md
           fi
