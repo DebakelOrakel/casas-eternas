@@ -70,7 +70,7 @@ import type { ChartPoint } from '../../map/worldView'
 import type { IncubatorAnswer, IncubatorRequest, PeoplesWithoutIds, PeoplingControls } from './incubatorWorker'
 import { NAME_KINDS, NO_PEOPLE } from './historyPack'
 import { createChroniclePanel, type ChronicleEvent } from './chroniclePanel'
-import { deriveLanguageView, nameAt, peopleCentre, type HistoryLanguages } from './languageView'
+import { deriveLanguageView, nameAt, peopleCentre, type HistoryLanguages, type LanguagePlaces } from './languageView'
 import { cellInputOf, CHART_HEIGHT, CHART_WIDTH, rainOf, type HistoryRain } from './historyInput'
 import { createLegendPanel } from '../../ui/legend/LegendPanel'
 import { createProgressPill } from '../../ui/progressPill/ProgressPill'
@@ -350,6 +350,19 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let languagesFrom: { tree: unknown; log: unknown } = { tree: null, log: null }
   // True while the fixture is shown: the history's languages are not.
   let languageFixture = false
+  // What the languages' view asks of the screen (TEG-141): a name's story
+  // from the worker's book, and where a cell lies on the world's chart
+  // (u, v each 0..1, the chart's width over its height).
+  function languagePlaces(): LanguagePlaces {
+    return {
+      story: async (index, year) => {
+        const answer = await incubator.ask({ type: 'nameStory', index, year })
+        return answer?.type === 'nameStory' ? answer.story : null
+      },
+      cellAt: (cell) => (overlay && cell >= 0 && cell < overlay.u.length ? { u: overlay.u[cell], v: overlay.v[cell] } : null),
+      aspect: cellsInput ? cellsInput.width / cellsInput.height : 2,
+    }
+  }
   // Called with the chronicle (sayChronicle): the history's peoples and its
   // log come with the history and its settlement.
   function showLanguages(): void {
@@ -358,7 +371,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const log = settled?.log ?? null
     if (languagesFrom.tree === tree && languagesFrom.log === log) return
     languagesFrom = { tree, log }
-    languageView = tree && log && historyTime && peoples ? deriveLanguageView({ tree, log, start: historyTime.start, end: historyTime.end, languages: peoples.languages }) : null
+    languageView = tree && log && historyTime && peoples ? deriveLanguageView({ tree, log, start: historyTime.start, end: historyTime.end, languages: peoples.languages }, languagePlaces()) : null
     languagePanel.setView(languageView)
   }
 

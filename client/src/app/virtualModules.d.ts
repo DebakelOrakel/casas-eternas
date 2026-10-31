@@ -104,9 +104,11 @@ declare module 'casas-incubator-wasm/casas-incubator.js' {
   // given by then; `forms`: by name [year, form, …] over time, JSON (the
   // current name: through its chain of old names). Then the other names'
   // arrays (historyPack.ts AliasesPacked, empty for none): `others`, by
-  // name {chain: [[how, namer, year, form] …], exonyms: [[how, namer, year,
-  // [year, form, …]] …]}; `place`, a name in a year with its older names
-  // and its exonyms, JSON (place_names.rs NameBook `place_json`).
+  // name {chain: [[how, namer, year, form, head] …], exonyms: [[how, namer,
+  // year, [year, form, …]] …]}; `place`, a name in a year with its older
+  // names and its exonyms, JSON (place_names.rs NameBook `place_json`);
+  // `story`, a name in a year with its parts and its forms over time, JSON
+  // (`story_json`, TEG-141).
   export class PlaceNames {
     constructor(peopleLanguage: Int32Array, parent: Int32Array, level: Uint8Array, people: Int32Array, from: Float32Array, at: Float32Array, until: Float32Array, seed: Int32Array, style: Uint8Array, changeStart: Int32Array, changeYear: Uint16Array, change: Uint8Array, changeChoice: Uint8Array, wordStart: Int32Array, wordYear: Uint16Array, wordMeaning: Uint8Array, kind: Uint8Array, place: Int32Array, cell: Int32Array, namer: Uint16Array, year: Float32Array, pattern: Uint8Array, meaning: Uint8Array, ownLength: Uint8Array, own: Uint8Array, aliasName: Int32Array, aliasHow: Uint8Array, aliasNamer: Uint16Array, aliasYear: Float32Array, aliasPattern: Uint8Array, aliasMeaning: Uint8Array, aliasLength: Uint8Array, aliasSounds: Uint8Array)
     count(): number
@@ -114,6 +116,7 @@ declare module 'casas-incubator-wasm/casas-incubator.js' {
     forms(from: number, count: number): string
     others(from: number, count: number): string
     place(j: number, year: number): string
+    story(j: number, year: number): string
     free(): void
   }
   export class Incubator {

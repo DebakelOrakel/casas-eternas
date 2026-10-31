@@ -869,10 +869,11 @@ impl NameBook {
     }
 
     /// The other names of names `from` .. `from + count`, JSON: by name
-    /// {"chain": [[how, namer, year, form] …], "exonyms": [[how, namer,
-    /// year, [year, form, …]] …]}: its chain from its first name (how
-    /// FIRST), each entry with its form when the next one came (the last
-    /// one's at its namer's last year); its exonyms with their forms over
+    /// {"chain": [[how, namer, year, form, head] …], "exonyms": [[how,
+    /// namer, year, [year, form, …]] …]}: its chain from its first name
+    /// (how FIRST), each entry with its form when the next one came (the
+    /// last one's at its namer's last year) and the meaning of its head
+    /// word (`head_of`, null for none); its exonyms with their forms over
     /// time.
     pub fn others_json(&mut self, from: usize, count: usize) -> String {
         let to = (from + count).min(self.names.len());
@@ -884,7 +885,7 @@ impl NameBook {
                 let next = chain.get(c + 1).map_or(f64::INFINITY, |n| n.year);
                 self.trim();
                 let form = form_of(&self.tree, &mut self.cache, e, next);
-                list.push(json!([e.how, e.namer, e.year, form]));
+                list.push(json!([e.how, e.namer, e.year, form, head_of(e)]));
             }
             let mut exonyms = Vec::new();
             for e in self.exonyms(j) {
@@ -932,6 +933,110 @@ impl NameBook {
         json!({ "name": name, "namer": chain[c].namer, "older": older, "exonyms": exonyms })
             .to_string()
     }
+
+    /// THE STORY of name j in year t (the languages window's names tab,
+    /// TEG-141), JSON: {"namer": the node of the entry current then,
+    /// "year": its year, "parts": [{"role", "meaning", "spelt"} …],
+    /// "steps": [{"year", "form", "rules"} …]}; null before it was given.
+    /// The parts: the recipe's slots in their order, each its role
+    /// ("head", "modifier" for A and N, "own", "ending"), its meaning (the
+    /// kit's id, null for none) and its word spelt alone, in the namer's
+    /// speech of the entry's year; a loan's words are "own" words, the
+    /// word for its kind its head. A slot the language has no word for
+    /// gives no part. The steps: the entry's form as given, then a new one
+    /// after each year of its namer's line, up to t, whose sound changes
+    /// change its letters (`forms_of`), each with the rules of the changes
+    /// that changed its words since the step before.
+    pub fn story_json(&mut self, j: usize, t: f64) -> String {
+        if j >= self.names.len() {
+            return "null".into();
+        }
+        let chain = self.chain(j);
+        let Some(c) = chain.iter().rposition(|e| e.year <= t) else {
+            return "null".into();
+        };
+        let e = &chain[c];
+        self.trim();
+        let sp = self.tree.speech(e.namer, e.year, &mut self.cache);
+        let lang = &sp.lang;
+        let part = |role: &str, meaning: Option<&str>, sounds: &[Phoneme]| json!({ "role": role, "meaning": meaning, "spelt": lang.spell(sounds) });
+        let parts: Vec<Value> = match &e.said {
+            Said::Recipe(r) => r
+                .slots
+                .iter()
+                .filter_map(|slot| match slot {
+                    Slot::Head(m) => lang.word(m).map(|w| part("head", Some(m), w)),
+                    Slot::Adjective(m) | Slot::Noun(m) => {
+                        lang.word(m).map(|w| part("modifier", Some(m), w))
+                    }
+                    Slot::Own(w) => Some(part("own", None, w)),
+                    Slot::Ending => lang
+                        .grammar
+                        .ending(r.kind)
+                        .map(|x| part("ending", None, &x.sounds)),
+                })
+                .collect(),
+            Said::Loan {
+                words,
+                head,
+                head_first,
+            } => {
+                let mut out: Vec<Value> = words.iter().map(|w| part("own", None, w)).collect();
+                if let Some(m) = head.as_deref()
+                    && let Some(w) = lang.word(m)
+                {
+                    let p = part("head", Some(m), w);
+                    if *head_first {
+                        out.insert(0, p);
+                    } else {
+                        out.push(p);
+                    }
+                }
+                out
+            }
+        };
+        let until = last_year(&self.tree, e);
+        let to = t.clamp(e.year, until);
+        let mut words = said_words(&self.tree, &mut self.cache, e);
+        let first = spell_in(&self.tree, &mut self.cache, e.namer, e.year, &words);
+        let mut steps = vec![json!({ "year": e.year, "form": first, "rules": [] })];
+        let mut last = first;
+        let mut rules: Vec<&str> = Vec::new();
+        let line = line_changes(&self.tree, e.namer, e.year, to);
+        let mut i = 0;
+        while i < line.len() {
+            let at = line[i].year;
+            while i < line.len() && line[i].year == at {
+                let before = words.clone();
+                wear(&mut words, &line[i]);
+                let rule = kit().changes.changes[line[i].change].rule.as_str();
+                if words != before && !rules.contains(&rule) {
+                    rules.push(rule);
+                }
+                i += 1;
+            }
+            let form = spell_in(&self.tree, &mut self.cache, e.namer, at, &words);
+            if form != last {
+                steps.push(json!({ "year": at, "form": form, "rules": rules }));
+                rules.clear();
+                last = form;
+            }
+        }
+        json!({ "namer": e.namer, "year": e.year, "parts": parts, "steps": steps }).to_string()
+    }
+}
+
+/// The meaning of an entry's head word (the slot H of its recipe, a
+/// loan's word for its kind), None for none: the names tab's "same
+/// pattern nearby" (TEG-141).
+pub fn head_of(e: &Entry) -> Option<&str> {
+    match &e.said {
+        Said::Recipe(r) => r.slots.iter().find_map(|s| match s {
+            Slot::Head(m) if !m.is_empty() => Some(m.as_str()),
+            _ => None,
+        }),
+        Said::Loan { head, .. } => head.as_deref(),
+    }
 }
 
 /// The names of places over a tree of peoples given as arrays (the
@@ -943,9 +1048,10 @@ impl NameBook {
 /// `contacts`, five numbers each (name_contact.rs `Contact`: two
 /// peoples, the border, the days, the links). JSON: the packed arrays
 /// (by their pack.rs names), each name at `end`, each name's forms over
-/// time (`NameBook::forms_json`), the other names (`others_json`), and by
+/// time (`NameBook::forms_json`), the other names (`others_json`), by
 /// loan its sounds, its namer's sounds in its year and whether its
-/// namer's syllable rules allow each word (`loans`).
+/// namer's syllable rules allow each word (`loans`), and each name's story
+/// at `end` (`story_json`).
 #[allow(clippy::too_many_arguments)]
 pub fn names_of_places_json(
     peoples: &[crate::languages::PeopleInput],
@@ -1034,9 +1140,11 @@ pub fn names_of_places_json(
     let at_end = book.at_json(end, 0, count);
     let forms = book.forms_json(0, count);
     let others = book.others_json(0, count);
+    let stories: Vec<String> = (0..count).map(|j| book.story_json(j, end)).collect();
     format!(
-        "{{\"arrays\":{arrays},\"atEnd\":{at_end},\"forms\":{forms},\"others\":{others},\"loans\":{}}}",
-        Value::Array(loans)
+        "{{\"arrays\":{arrays},\"atEnd\":{at_end},\"forms\":{forms},\"others\":{others},\"loans\":{},\"stories\":[{}]}}",
+        Value::Array(loans),
+        stories.join(",")
     )
 }
 
@@ -1574,5 +1682,64 @@ mod tests {
             changed += (forms.len() > 1) as usize;
         }
         assert!(changed > 0, "no name changed its form");
+    }
+
+    // TEG-141: a name's story has its recipe's parts, each spelt in the
+    // name's form as given where the name is one word of them alone
+    // (no joint); its steps are its forms over time, each later one with
+    // rules of its namer's line.
+    #[test]
+    fn a_story_has_the_parts_and_the_forms_over_time() {
+        let (tree, _) = Languages::build(&peoples(), 42.0, 0.0, 6000.0);
+        let list = places();
+        let names = Names::give(&tree, &list);
+        let mut book = NameBook::new(tree, names.clone(), Aliases::default()).unwrap();
+        let mut ruled = 0;
+        for j in 0..names.len() {
+            let year = names.year[j] as f64;
+            assert_eq!(book.story_json(j, year - 1.0), "null");
+            let story: Value = serde_json::from_str(&book.story_json(j, 1e9)).unwrap();
+            let parts = story["parts"].as_array().unwrap();
+            assert!(!parts.is_empty());
+            let recipe = book.recipe(j);
+            assert!(parts.len() <= recipe.slots.len());
+            let first = story["steps"][0]["form"].as_str().unwrap().to_lowercase();
+            for p in parts {
+                let spelt = p["spelt"].as_str().unwrap();
+                assert!(!spelt.is_empty());
+                assert!(
+                    ["head", "modifier", "own", "ending"].contains(&p["role"].as_str().unwrap())
+                );
+                if parts.len() == 1 && p["role"] != "ending" {
+                    assert_eq!(first, spelt.to_lowercase(), "name {j}");
+                }
+            }
+            // The steps are the forms over time.
+            let steps: Vec<(f64, String)> = story["steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| {
+                    (
+                        s["year"].as_f64().unwrap(),
+                        s["form"].as_str().unwrap().to_string(),
+                    )
+                })
+                .collect();
+            assert_eq!(steps, book.forms(j));
+            let line = line_changes(&book.tree, names.namer[j] as usize, year, f64::INFINITY);
+            for s in &story["steps"].as_array().unwrap()[1..] {
+                let rules = s["rules"].as_array().unwrap();
+                assert!(!rules.is_empty());
+                for r in rules {
+                    assert!(
+                        line.iter()
+                            .any(|d| kit().changes.changes[d.change].rule == r.as_str().unwrap())
+                    );
+                }
+                ruled += 1;
+            }
+        }
+        assert!(ruled > 0, "no story has a step with a rule");
     }
 }

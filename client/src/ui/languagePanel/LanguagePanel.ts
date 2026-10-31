@@ -1,8 +1,10 @@
-import { t } from '../../i18n/i18n'
+import { t, type TKey } from '../../i18n/i18n'
+import { defaultCompared, familyOf, renderCompare } from './languageCompare'
 import { el, iconOf, LANGUAGES_ICON, yearText } from './languageDom'
+import { renderName } from './languageName'
 import { renderOverview } from './languageOverview'
 import { renderTree } from './languageTree'
-import { indexOf, sampleAt, bornBy, type LanguageIndex, type LanguageView } from './languageTypes'
+import { indexOf, sampleAt, bornBy, type LanguageIndex, type LanguageView, type NameEntry, type NameStory, type PlaceKind } from './languageTypes'
 import { FIRST_NAMES, NAMES_PAGE, renderWorld } from './languageWorld'
 import '../theme/design.css'
 import './languagePanel.css'
@@ -19,17 +21,21 @@ export { LANGUAGES_ICON }
 // One panel, two layouts, one DOM; a class says which:
 //
 // - NARROW: a column at the right, beside the chronicle, shown and hidden
-//   by the screen (its switch in the title bar). Two tabs: the tree, and
-//   the language selected (its overview, then who speaks it).
+//   by the screen (its switch in the title bar). Four tabs: the tree; the
+//   language selected (its overview, then who speaks it); the comparison
+//   of languages of its family (languageCompare.ts); one name
+//   (languageName.ts).
 // - FULL: a window over the work area, as the artifacts and the jobs
-//   (ui/windows/windowSet.ts): three columns, the tree, the language's
-//   overview, its world side. Escape, or "back to the panel", folds it.
+//   (ui/windows/windowSet.ts): three columns, the tree, the work (tabs:
+//   the language's overview, the comparison, one name), the language's
+//   world side. Escape, or "back to the panel", folds it.
 //
-// The selection, the tab, the filters, the search and what is unfolded
-// stay as they are across the two. The screen asks for the layout: the
-// panel's buttons and Escape only say what the viewer wants (`onLayout`),
-// and the screen opens or closes the window through its window set, which
-// calls `open` or `close` here.
+// The selection, the tab, the filters, the search, what is unfolded, the
+// languages compared and the name chosen stay as they are across the two
+// (the narrow language tab is the full overview tab). The screen asks for
+// the layout: the panel's buttons and Escape only say what the viewer
+// wants (`onLayout`), and the screen opens or closes the window through
+// its window set, which calls `open` or `close` here.
 
 export type LanguageLayout = 'narrow' | 'full'
 
@@ -56,7 +62,15 @@ export interface LanguagePanel {
 const WIDTH_VAR = '--right-panel-width'
 const WIDTH = '360px'
 
-type Tab = 'tree' | 'language'
+// The work shown: the narrow layout's tabs but the tree, the full
+// layout's middle column's tabs.
+type Work = 'overview' | 'compare' | 'names'
+const WORKS: readonly Work[] = ['overview', 'compare', 'names']
+const WORK_KEYS: Record<Work, TKey> = { overview: 'language.tab.overview', compare: 'language.tab.compare', names: 'language.tab.names' }
+// The narrow tabs: the tree, then the works ("language" for the overview).
+type Tab = 'tree' | Work
+const TABS: readonly Tab[] = ['tree', 'overview', 'compare', 'names']
+const TAB_KEYS: Record<Tab, TKey> = { tree: 'language.tab.tree', overview: 'language.tab.language', compare: 'language.tab.compare', names: 'language.tab.names' }
 
 export function createLanguagePanel(host: HTMLElement, options: {
   // The node selected, for the screen to colour its peoples on the map.
@@ -86,12 +100,13 @@ export function createLanguagePanel(host: HTMLElement, options: {
 
   const tabs = el('div', 'language-panel__tabs language-panel__narrow-only')
   tabs.setAttribute('role', 'tablist')
-  const tabButtons = (['tree', 'language'] as const).map((id) => {
+  const tabButtons = TABS.map((id) => {
     const b = el('button', 'language-panel__tab')
     b.type = 'button'
     b.setAttribute('role', 'tab')
     b.addEventListener('click', () => {
-      tab = id
+      treeShown = id === 'tree'
+      if (id !== 'tree') work = id
       paint()
     })
     tabs.append(b)
@@ -143,8 +158,19 @@ export function createLanguagePanel(host: HTMLElement, options: {
 
   const mainColumn = el('section', 'language-panel__column language-panel__column--main')
   const mainTabs = el('div', 'language-panel__main-tabs language-panel__full-only')
-  const overviewTab = el('span', 'language-panel__main-tab')
-  mainTabs.append(overviewTab)
+  mainTabs.setAttribute('role', 'tablist')
+  const mainTabButtons = WORKS.map((id) => {
+    const b = el('button', 'language-panel__main-tab')
+    b.type = 'button'
+    b.setAttribute('role', 'tab')
+    b.addEventListener('click', () => {
+      work = id
+      treeShown = false
+      paint()
+    })
+    mainTabs.append(b)
+    return { id, button: b }
+  })
   const overview = el('div', 'language-panel__overview')
   mainColumn.append(mainTabs, overview)
   const worldColumn = el('section', 'language-panel__column language-panel__column--world')
@@ -162,7 +188,8 @@ export function createLanguagePanel(host: HTMLElement, options: {
   let index: LanguageIndex | null = null
   let year = 0
   let selected: string | null = null
-  let tab: Tab = 'tree'
+  let work: Work = 'overview'
+  let treeShown = true
   let layoutNow: LanguageLayout = 'narrow'
   let visible = false
   const expanded = new Set<string>()
@@ -175,6 +202,16 @@ export function createLanguagePanel(host: HTMLElement, options: {
   let daughtersWhole = false
   let peoplesWhole = false
   let namesShown = FIRST_NAMES
+  // The comparison: its family, its languages, its menu, its rows.
+  let compareFamily: string | null = null
+  let compared: string[] = []
+  let compareMenu = false
+  let compareWhole = false
+  // The name chosen (its index where the view gives one, else its cell and
+  // kind; the family it was found in), and its story for the key asked.
+  let chosen: { index?: number; cell: number; kind: PlaceKind; family: string | null } | null = null
+  let story: NameStory | null = null
+  let storyKey = ''
 
   // The time shown: the chronicle's, within the view's times.
   const shownYear = (): number => (view && view.times.length > 0 ? Math.min(year, view.times[view.times.length - 1]) : year)
@@ -227,52 +264,146 @@ export function createLanguagePanel(host: HTMLElement, options: {
     }))
   }
 
-  function paintLanguage(): void {
+  function paintMain(): void {
     const node = selected && index ? index.byId.get(selected) : undefined
-    if (!view || !index || !node || !bornBy(node, shownYear())) {
+    const at = shownYear()
+    const shown = !!node && bornBy(node, at)
+    if (view && index && shown) {
+      worldColumn.replaceChildren(renderWorld({ view, node: node!, year: at, peoplesWhole, namesShown }, {
+        showOnMap: options.onShowOnMap,
+        chooseName,
+        peoplesWhole: () => {
+          peoplesWhole = true
+          paintMain()
+        },
+        moreNames: () => {
+          namesShown += NAMES_PAGE
+          paintMain()
+        },
+      }))
+    } else worldColumn.replaceChildren()
+    if (!view || !index) {
       overview.replaceChildren(el('p', 'language-panel__hint', t('language.tree.hint')))
-      worldColumn.replaceChildren()
       return
     }
-    overview.replaceChildren(renderOverview({ view, index, node, year: shownYear(), sample: sample(), lexiconWhole, daughtersWhole }, {
+    if (work === 'compare') {
+      // A family other than the one compared: its languages, afresh.
+      const family = familyOf(index, selected)
+      if (family !== null && family !== compareFamily) {
+        compareFamily = family
+        compared = defaultCompared(index, selected, at, sample())
+        compareMenu = false
+        compareWhole = false
+      }
+      overview.replaceChildren(renderCompare({ view, index, year: at, sample: sample(), family: compareFamily, compared, menuOpen: compareMenu, whole: compareWhole }, {
+        add: (id) => {
+          compared = [...compared, id]
+          compareMenu = false
+          paintMain()
+        },
+        remove: (id) => {
+          compared = compared.filter((x) => x !== id)
+          paintMain()
+        },
+        toggleMenu: () => {
+          compareMenu = !compareMenu
+          paintMain()
+        },
+        whole: () => {
+          compareWhole = true
+          paintMain()
+        },
+        name: chooseName,
+      }))
+      return
+    }
+    if (work === 'names') {
+      const { name, family } = chosenName()
+      askStory(name)
+      overview.replaceChildren(renderName({ view, index, year: at, name, family, story, selected: shown ? node! : null }, {
+        choose: chooseName,
+        showOnMap: (cell) => options.onShowOnMap({ cell }),
+      }))
+      return
+    }
+    if (!shown) {
+      overview.replaceChildren(el('p', 'language-panel__hint', t('language.tree.hint')))
+      return
+    }
+    overview.replaceChildren(renderOverview({ view, index, node: node!, year: at, sample: sample(), lexiconWhole, daughtersWhole }, {
       select: (id) => selectNode(id),
       lexiconWhole: () => {
         lexiconWhole = true
-        paintLanguage()
+        paintMain()
       },
       daughtersWhole: () => {
         daughtersWhole = true
-        paintLanguage()
+        paintMain()
       },
     }))
-    worldColumn.replaceChildren(renderWorld({ view, node, year: shownYear(), peoplesWhole, namesShown }, {
-      showOnMap: options.onShowOnMap,
-      peoplesWhole: () => {
-        peoplesWhole = true
-        paintLanguage()
-      },
-      moreNames: () => {
-        namesShown += NAMES_PAGE
-        paintLanguage()
-      },
-    }))
+  }
+
+  // A name chosen (in the world side's list, the comparison's same area,
+  // the names nearby): the names tab shows it, the map goes to it.
+  function chooseName(entry: NameEntry): void {
+    chosen = { index: entry.index, cell: entry.cell, kind: entry.kind, family: index ? familyOf(index, entry.language) : null }
+    work = 'names'
+    treeShown = false
+    paint()
+    options.onShowOnMap({ cell: entry.cell })
+  }
+
+  // The name chosen in its form of the time shown, and the names of its
+  // family then (the candidates nearby): looked for in the family it was
+  // found in, then in all (another people may have taken it since).
+  function chosenName(): { name: NameEntry | null; family: NameEntry[] } {
+    if (!chosen || !view || !index) return { name: null, family: [] }
+    const want = chosen
+    const same = (r: NameEntry): boolean => (want.index !== undefined ? r.index === want.index : r.cell === want.cell && r.kind === want.kind)
+    const families = view.nodes.filter((n) => n.level === 'family').map((n) => n.id)
+    for (const family of [want.family, ...families.filter((f) => f !== want.family)]) {
+      if (family === null) continue
+      const rows = view.names(family, 0, Infinity, shownYear()).rows
+      const name = rows.find(same)
+      if (name) return { name, family: [...rows] }
+    }
+    return { name: null, family: [] }
+  }
+
+  // The story of the name shown, asked for once a name and year; painted
+  // when it comes, if it is still the one asked for.
+  function askStory(name: NameEntry | null): void {
+    const key = name && view?.story ? `${name.index ?? `${name.cell}:${name.kind}`}@${shownYear()}` : ''
+    if (key === storyKey) return
+    storyKey = key
+    story = null
+    if (!name || !view?.story) return
+    void view.story(name, shownYear()).then((next) => {
+      if (storyKey !== key) return
+      story = next
+      paintMain()
+    })
   }
 
   function paint(): void {
     title.textContent = t('language.panel.title')
     unfold.textContent = t('language.panel.unfold')
     fold.textContent = t('language.panel.fold')
-    tabButtons[0].button.textContent = t('language.tab.tree')
-    tabButtons[1].button.textContent = t('language.tab.language')
-    for (const { id, button } of tabButtons) button.setAttribute('aria-selected', String(id === tab))
-    aside.classList.toggle('language-panel--tab-tree', tab === 'tree')
-    aside.classList.toggle('language-panel--tab-language', tab === 'language')
+    const tab: Tab = treeShown ? 'tree' : work
+    for (const { id, button } of tabButtons) {
+      button.textContent = t(TAB_KEYS[id])
+      button.setAttribute('aria-selected', String(id === tab))
+    }
+    for (const { id, button } of mainTabButtons) {
+      button.textContent = t(WORK_KEYS[id])
+      button.setAttribute('aria-selected', String(id === work))
+    }
+    for (const id of TABS) aside.classList.toggle(`language-panel--tab-${id}`, id === tab)
     input.placeholder = t('language.search.placeholder')
     today.textContent = t('language.filter.today')
     withExtinct.textContent = t('language.filter.extinct')
     dialectLabel.textContent = t('language.filter.dialects')
     hint.textContent = t('language.tree.hint')
-    overviewTab.textContent = t('language.tab.overview')
     empty.textContent = t('language.panel.empty')
     aside.classList.toggle('language-panel--empty', view === null)
     if (view) {
@@ -293,7 +424,7 @@ export function createLanguagePanel(host: HTMLElement, options: {
       when.textContent = ''
     }
     paintTree()
-    paintLanguage()
+    paintMain()
   }
 
   function applyLayout(): void {
@@ -312,6 +443,12 @@ export function createLanguagePanel(host: HTMLElement, options: {
       view = next
       index = next ? indexOf(next) : null
       if (selected && !index?.byId.has(selected)) selected = null
+      // Another view: its own comparison and names.
+      compareFamily = null
+      compared = []
+      chosen = null
+      storyKey = ''
+      story = null
       paint()
     },
     setTime(next) {

@@ -36,6 +36,18 @@
 //    borrower's sounds of its year, and its syllable rules allow it; the
 //    view lists a taken name under its new namer from the taking on, with
 //    its older name, and its exonyms.
+// 7. The compare and names tabs (TEG-141): on the trees of 1., every word
+//    of a language's whole lexicon not `new` is its family's proto-language
+//    word through the line's sound changes, and its `changes` are exactly
+//    those that changed it (the crate replays each word alone with
+//    apply_change: `lexicon` of languagesOfPeoples); the words of one
+//    meaning not `new` in a family go back to one proto-language word. On
+//    the names of 5.: a name's story is the same from the native build and
+//    from the WASM's book, asked one at a time; its steps are its forms over
+//    time, its head part the head the others give; the names of the same
+//    pattern nearby share its head and are the nearest of those (on the
+//    torus). The fixture's Keldisch, Orrisch and Vellisch compare, and
+//    Keldfurt has its story and its pattern nearby.
 import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -51,6 +63,7 @@ const M = {
   fixture: await L('/scripts/fixtures/fixtureView.ts'),
   windows: await L('/src/ui/windows/windowSet.ts'),
   types: await L('/src/ui/languagePanel/languageTypes.ts'),
+  compare: await L('/src/ui/languagePanel/languageCompare.ts'),
 }
 
 // The incubator's WASM build (engine/dist/incubator, `make engine`).
@@ -182,13 +195,13 @@ function languagesOf(history, seed) {
   packed.description = new TextEncoder().encode(out.arrays.languages)
   const l = packed
   const made = JSON.parse(wasm.languageView(l.peopleLanguage, l.parent, l.level, l.people, l.from, l.at, l.until, l.seed, l.style, l.changeStart, l.changeYear, l.change, l.changeChoice, l.wordStart, l.wordYear, l.wordMeaning))
-  return { languages: { tree: packed, made }, events: out.log }
+  return { languages: { tree: packed, made }, events: out.log, lexicon: out.lexicon }
 }
 
 console.log('1. the adapter (languageView.ts) on the crate\'s languages (its WASM build)')
 for (const seed of [1, 7, 2840]) {
   const made = makeHistory(seed)
-  const { languages, events } = languagesOf(made, seed)
+  const { languages, events, lexicon } = languagesOf(made, seed)
   const log = [...made.log, ...events].sort((a, b) => a.at - b.at)
   const history = { ...made, log, languages }
   const { tree } = history
@@ -261,6 +274,43 @@ for (const seed of [1, 7, 2840]) {
   check(`seed ${seed}: each language has a detail, each node and people a name`, ofLevel('language').every((n) => view.detail(n.id) !== null) && view.nodes.every((n) => n.name !== '') && Array.from({ length: peopleCount }, (_, p) => view.peopleName(p)).every((s) => s !== ''))
   const centre = M.view.peopleCentre(tree, families[0].peoples, view.times.length - 1)
   check(`seed ${seed}: a family's centre is one of its peoples' hearts`, families[0].peoples.length === 0 || tree.centre.includes(centre))
+
+  // 7. The comparison's words: the view's against the crate's word-by-word
+  // replay; one proto-language word a meaning in a family.
+  const replayed = new Map(lexicon.map(([k, m, word, hit, proto]) => [`${k}:${m}`, { word, hit, proto }]))
+  const level = languages.tree.level
+  let inherited = 0
+  let changedWords = 0
+  let newWords = 0
+  let wrongWord = ''
+  const protoOf = new Map()
+  let kin = ''
+  for (let k = 0; k < level.length; k++) {
+    if (level[k] === 2) continue
+    const detail = view.detail(level[k] === 0 ? `f${k}p` : `l${k}`)
+    if (!detail) { wrongWord ||= `node ${k}: no detail`; continue }
+    let family = k
+    while (languages.tree.parent[family] >= 0) family = languages.tree.parent[family]
+    const line = detail.line ?? []
+    if (detail.lexicon.length !== detail.lexiconSize) wrongWord ||= `node ${k}: ${detail.lexicon.length} of ${detail.lexiconSize} words`
+    for (const e of detail.lexicon) {
+      if (!e.changes.every((i, n) => i >= 0 && i < line.length && (n === 0 || i > e.changes[n - 1]))) wrongWord ||= `node ${k} ${e.meaning}: changes ${e.changes} of ${line.length}`
+      if (e.new !== null) {
+        newWords++
+        if (e.proto !== null || e.changes.some((i) => line[i].year < e.new)) wrongWord ||= `node ${k} ${e.meaning}: new ${e.new}, changes ${e.changes}`
+        continue
+      }
+      inherited++
+      const r = replayed.get(`${k}:${e.meaning}`)
+      if (!r || r.word !== e.word || r.proto !== e.proto || r.hit.join() !== e.changes.join()) wrongWord ||= `node ${k} ${e.meaning}: ${e.word} [${e.changes}] *${e.proto}, replayed ${r?.word} [${r?.hit}] *${r?.proto}`
+      if (e.changes.length > 0) changedWords++
+      const key = `${family}:${e.meaning}`
+      if (!protoOf.has(key)) protoOf.set(key, e.proto)
+      else if (protoOf.get(key) !== e.proto) kin ||= `${key}: *${protoOf.get(key)} and *${e.proto}`
+    }
+  }
+  check(`seed ${seed}: the whole lexicon, each inherited word the proto-language's through the line's changes, its changes those apply_change makes (${inherited} inherited, ${changedWords} changed, ${newWords} new)`, wrongWord === '' && inherited > 0 && changedWords > 0 && newWords > 0, wrongWord)
+  check(`seed ${seed}: a meaning's inherited words in a family go back to one proto-language word`, kin === '' && protoOf.size > 0, kin)
 }
 
 // --- 2. the fixture ----------------------------------------------------------
@@ -288,6 +338,17 @@ const keldisch = languages.find((n) => n.name === 'Keldisch')
 check('Keldisch has a detail, 4 dialects, 9 peoples', !!keldisch && fixture.detail(keldisch.id) !== null && level('dialect').filter((d) => d.parent === keldisch.id).length === 4 && keldisch.peoples.length === 9)
 const sample = M.types.sampleAt(fixture.times, 1e9)
 check('the time after the last sample reads the last sample', sample === fixture.times.length - 1)
+const fixtureIndex = M.types.indexOf(fixture)
+const compared = M.compare.defaultCompared(fixtureIndex, keldisch.id, 1e9, sample)
+const comparedDetails = compared.map((id) => fixture.detail(id))
+check(`the comparison starts with Keldisch and two of its family (${compared.map((id) => fixtureIndex.byId.get(id).name).join(', ')})`, compared[0] === keldisch.id && compared.length === 3 && compared.every((id) => M.compare.familyOf(fixtureIndex, id) === 'f0'))
+check('the compared have lines, and their words the changes and the proto-language words', comparedDetails.every((d) => d && d.line && d.lexicon.every((e) => e.changes.every((i) => i < d.line.length) && (e.new === null) === (e.proto !== null))) && fixture.detail('f0p') !== null)
+const fixtureFamily = fixture.names('f0', 0, 1e6).rows
+const keldfurt = fixtureFamily.find((r) => r.name === 'Keldfurt')
+const keldStory = keldfurt ? await fixture.story(keldfurt, 1e9) : null
+check('Keldfurt has its parts and its forms over time', !!keldStory && keldStory.parts.length === 2 && keldStory.steps.at(-1).form === 'Keldfurt')
+const nearby = keldfurt ? M.types.samePatternNearby(keldfurt, fixtureFamily, fixture.cellAt, fixture.aspect, 3).map((r) => r.name) : []
+check(`Keldfurt's pattern nearby: ${nearby.join(', ')}`, nearby.join() === 'Ovorfurt,Sinufurt,Marnfurt')
 
 // --- 3. the window set -------------------------------------------------------
 
@@ -420,10 +481,52 @@ for (const seed of [1, 7, 2840]) {
   const l = languages.tree
   const book = new wasm.PlaceNames(l.peopleLanguage, l.parent, l.level, l.people, l.from, l.at, l.until, l.seed, l.style, l.changeStart, l.changeYear, l.change, l.changeChoice, l.wordStart, l.wordYear, l.wordMeaning, names.kind, names.place, names.cell, names.namer, names.year, Uint8Array.from(a.namePattern), Uint8Array.from(a.nameMeaning), Uint8Array.from(a.nameOwnLength), Uint8Array.from(a.nameOwn), Int32Array.from(a.aliasName), Uint8Array.from(a.aliasHow), Uint16Array.from(a.aliasNamer), Float32Array.from(a.aliasYear), Uint8Array.from(a.aliasPattern), Uint8Array.from(a.aliasMeaning), Uint8Array.from(a.aliasLength), Uint8Array.from(a.aliasSounds))
   const place = JSON.parse(book.place(taken, made.end))
+  // 7. The stories: the WASM's book, asked one at a time, gives the
+  // native build's; the steps are the forms over time; the head part is
+  // the chain's head.
+  let storyWrong = ''
+  let stepped = 0
+  for (let j = 0; j < a.nameKind.length; j++) {
+    const lazy = book.story(j, made.end)
+    const story = out.stories[j]
+    if (JSON.stringify(JSON.parse(lazy)) !== JSON.stringify(story)) storyWrong ||= `name ${j}: the book's story differs`
+    if (!story) { storyWrong ||= `name ${j}: no story`; continue }
+    const chain = names.chain[j]
+    if (chain.length === 1 && story.steps.map((s) => `${s.year}|${s.form}`).join() !== names.forms[j].forms.map((f, k) => `${names.forms[j].years[k]}|${f}`).join()) storyWrong ||= `name ${j}: steps ${story.steps.map((s) => s.form)} vs forms ${names.forms[j].forms}`
+    if (story.steps.slice(1).some((s) => s.rules.length === 0)) storyWrong ||= `name ${j}: a step without its rule`
+    const head = chain[chain.length - 1].head
+    const headPart = story.parts.find((x) => x.role === 'head')
+    if ((head ?? null) !== (headPart?.meaning ?? null) && !(head && !headPart)) storyWrong ||= `name ${j}: head ${head}, its part ${headPart?.meaning}`
+    if (story.steps.length > 1) stepped++
+  }
+  check(`seed ${seed}: each name's story, the native build's and the book's alike, its steps its forms over time (${stepped} with later forms)`, storyWrong === '' && stepped > 0, storyWrong)
+  const placesView = M.view.deriveLanguageView({ ...made, log, languages: { ...languages, names } }, {
+    story: async (j, year) => JSON.parse(book.story(j, year)),
+    cellAt: (cell) => ({ u: (cell * 0.6180339887) % 1, v: (cell * 0.4142135623) % 1 }),
+    aspect: 2,
+  })
+  const familyRows = view.nodes.filter((n) => n.level === 'family').map((f) => placesView.names(f.id, 0, 1e6).rows)
+  // A name whose head the most names of its family share.
+  const withHead = familyRows.flatMap((rows) => rows.filter((r) => r.head).map((r) => ({ r, rows, shared: rows.filter((o) => o.head === r.head && o !== r).length }))).sort((x, y) => y.shared - x.shared)[0]
+  let nearWrong = ''
+  if (withHead) {
+    const { r, rows } = withHead
+    const got = M.types.samePatternNearby(r, rows, placesView.cellAt, placesView.aspect, 3)
+    const at = placesView.cellAt(r.cell)
+    const d = (o) => M.types.torusDistance(at, placesView.cellAt(o.cell), 2)
+    const rest = rows.filter((o) => o.head === r.head && !got.includes(o) && o !== r)
+    if (got.length !== Math.min(3, withHead.shared) || got.length === 0 || got.some((o) => o.head !== r.head || o === r)) nearWrong = `${got.length} names nearby of ${withHead.shared}`
+    else if (got.some((o, k) => k > 0 && d(o) < d(got[k - 1])) || rest.some((o) => d(o) < d(got.at(-1)))) nearWrong = 'not the nearest, in order'
+    const story = await placesView.story(r, made.end)
+    if (!story || story.steps.at(-1).form !== r.name || !placesView.nodes.some((n) => n.id === story.language)) nearWrong ||= `the view's story of "${r.name}": ${JSON.stringify(story)}`
+  } else nearWrong = 'no name with a head word'
+  check(`seed ${seed}: the same pattern nearby shares the head and is the nearest (of "${withHead?.r.name}", ${withHead?.shared} more with its head); the view's story ends in the name`, nearWrong === '', nearWrong)
   book.free()
   check(`seed ${seed}: the book gives a place's name, its older names and its exonyms`, place.name === M.view.nameAt(names, taken, made.end) && place.older.length === names.chain[taken].length - 1 && place.older[0][0] === first.form)
   console.log(`  seed ${seed}: e.g. ${names.chain[taken].map((e) => `"${e.form}" (${HOW[e.how] ?? 'first'})`).join(' → ')}`)
 }
+
+check('the torus distance wraps', near(M.types.torusDistance({ u: 0.01, v: 0.98 }, { u: 0.99, v: 0.02 }, 2), Math.hypot(0.04, 0.04)))
 
 await server.close()
 if (failures > 0) {

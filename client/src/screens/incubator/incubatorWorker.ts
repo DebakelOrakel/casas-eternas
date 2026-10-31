@@ -5,7 +5,7 @@ import type { AnimalLayer, CellInput, PeopleResult, PlantLayer, SettleResult, Tr
 import { incubatorOf } from './historyInput'
 import type { LogEvent } from './historyLogShared'
 import { peopleIdsOf, unpackHistory, unpackSettled, type LanguagesTree, type PackedHistory, type PeoplesTree } from './historyPack'
-import { formsOf, otherNamesOf, TOWN_PEOPLE, type HistoryLanguages, type HistoryNames, type LanguagesMade, type OthersRaw } from './languageView'
+import { formsOf, otherNamesOf, TOWN_PEOPLE, type HistoryLanguages, type HistoryNames, type LanguagesMade, type NameStoryRaw, type OthersRaw } from './languageView'
 import { PEOPLE_FRAME_STEP } from './peopleShared'
 import type { PeoplingInput } from '../../world/historyArtifacts'
 import { PLANTS } from './plants'
@@ -42,6 +42,9 @@ export type IncubatorRequest =
   | { type: 'pack' }
   | { type: 'restore'; bytes: ArrayBuffer }
   | { type: 'settle' }
+  // A name's story in a year (TEG-141; the book of the history last
+  // read).
+  | { type: 'nameStory'; index: number; year: number }
 
 export type IncubatorAnswer =
   | { type: 'cells'; count: number; owners: Int32Array; u: Float32Array; v: Float32Array; land: Uint8Array; landmass: Int32Array; landmassKm2: Float64Array; areaKm2: Float32Array; iceKm: Float32Array; seaDepthM: Float32Array; ms: number }
@@ -66,6 +69,8 @@ export type IncubatorAnswer =
   // `peoples`: each cell's people id (historyPack.ts NO_PEOPLE for none).
   | { type: 'frame'; index: number; people: Float32Array | null; small: Uint8Array | null; peoples: Uint16Array | null; big: { id: string; cells: Int32Array; share: Uint8Array }[]; ms: number }
   | { type: 'pack'; bytes: ArrayBuffer | null; ms: number }
+  // null: no such name then, or no names.
+  | { type: 'nameStory'; story: NameStoryRaw | null; ms: number }
   | { type: 'failed'; message: string }
 
 export type PeoplesWithoutIds = Omit<PeoplesTree, 'ids'>
@@ -81,6 +86,9 @@ let seed = 0
 // The history run or restored last, read, and its bytes.
 let history: PackedHistory | null = null
 let historyBytes: Uint8Array | null = null
+// The names of that history, read: kept for the stories the languages
+// panel asks for, one name at a time (TEG-141).
+let book: PlaceNames | null = null
 
 // THE LANGUAGES of a history: its tree, copied, and what the crate makes
 // of it (casas-incubator languages.rs `Languages::view`).
@@ -95,20 +103,25 @@ function languagesOf(h: PackedHistory): HistoryLanguages {
 // over time as the crate spells them (its `PlaceNames`); with THE OTHER
 // NAMES (TEG-142, TEG-143), the old names and the exonyms (none for a
 // history packed before them); null for a history packed before the names.
+// The book stays for the stories (`book`).
 function namesOf(h: PackedHistory): HistoryNames | null {
+  book?.free()
+  book = null
   const n = h.names
   if (!n) return null
   const l = h.languages
   const a = h.aliases
-  const book = new PlaceNames(l.peopleLanguage, l.parent, l.level, l.people, l.from, l.at, l.until, l.seed, l.style, l.changeStart, l.changeYear, l.change, l.changeChoice, l.wordStart, l.wordYear, l.wordMeaning, n.kind, n.place, n.cell, n.namer, n.year, n.pattern, n.meaning, n.ownLength, n.own, a?.name ?? new Int32Array(), a?.how ?? new Uint8Array(), a?.namer ?? new Uint16Array(), a?.year ?? new Float32Array(), a?.pattern ?? new Uint8Array(), a?.meaning ?? new Uint8Array(), a?.length ?? new Uint8Array(), a?.sounds ?? new Uint8Array())
+  const read = new PlaceNames(l.peopleLanguage, l.parent, l.level, l.people, l.from, l.at, l.until, l.seed, l.style, l.changeStart, l.changeYear, l.change, l.changeChoice, l.wordStart, l.wordYear, l.wordMeaning, n.kind, n.place, n.cell, n.namer, n.year, n.pattern, n.meaning, n.ownLength, n.own, a?.name ?? new Int32Array(), a?.how ?? new Uint8Array(), a?.namer ?? new Uint16Array(), a?.year ?? new Float32Array(), a?.pattern ?? new Uint8Array(), a?.meaning ?? new Uint8Array(), a?.length ?? new Uint8Array(), a?.sounds ?? new Uint8Array())
   let raw: (number | string)[][]
   let others: OthersRaw
   try {
-    raw = JSON.parse(book.forms(0, book.count())) as (number | string)[][]
-    others = JSON.parse(book.others(0, book.count())) as OthersRaw
-  } finally {
-    book.free()
+    raw = JSON.parse(read.forms(0, read.count())) as (number | string)[][]
+    others = JSON.parse(read.others(0, read.count())) as OthersRaw
+  } catch (e) {
+    read.free()
+    throw e
   }
+  book = read
   const towns = h.lifeways.villages?.villageTown
   return {
     kind: n.kind.slice(),
@@ -152,6 +165,8 @@ async function answer(ask: IncubatorRequest): Promise<void> {
   }
   if (ask.type === 'cells') {
     engine?.free()
+    book?.free()
+    book = null
     history = null
     historyBytes = null
     seed = ask.seed
@@ -224,6 +239,11 @@ async function answer(ask: IncubatorRequest): Promise<void> {
   }
   if (ask.type === 'restore') {
     peopleAnswer(adopt(new Uint8Array(ask.bytes)), ms())
+    return
+  }
+  if (ask.type === 'nameStory') {
+    const story = book && ask.index < book.count() ? JSON.parse(book.story(ask.index, ask.year)) as NameStoryRaw | null : null
+    worker.postMessage({ type: 'nameStory', story, ms: ms() } satisfies IncubatorAnswer)
     return
   }
   if (ask.type === 'pack') {

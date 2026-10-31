@@ -27,6 +27,8 @@ export interface WorldState {
 
 export interface WorldActions {
   showOnMap(target: { language: string } | { cell: number }): void
+  // A name of the list chosen: the names tab shows it (TEG-141).
+  chooseName(entry: NameEntry): void
   peoplesWhole(): void
   moreNames(): void
 }
@@ -78,7 +80,7 @@ export function renderWorld(state: WorldState, actions: WorldActions): HTMLEleme
     for (const entry of names.rows) {
       const line = el('button', 'language-world__name')
       line.type = 'button'
-      line.addEventListener('click', () => actions.showOnMap({ cell: entry.cell }))
+      line.addEventListener('click', () => actions.chooseName(entry))
       const text = el('span', 'language-world__name-text', entry.name)
       const others = otherNames(entry, languageName)
       if (others) text.append(el('span', 'language-world__name-other', others))

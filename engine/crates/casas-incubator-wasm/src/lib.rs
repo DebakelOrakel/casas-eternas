@@ -314,7 +314,7 @@ impl PlaceNames {
     }
 
     /// The other names of names `from` .. `from + count`, JSON: by name
-    /// {"chain": [[how, namer, year, form] …], "exonyms": [[how, namer,
+    /// {"chain": [[how, namer, year, form, head] …], "exonyms": [[how, namer,
     /// year, [year, form, …]] …]} (`NameBook::others_json`).
     pub fn others(&mut self, from: usize, count: usize) -> String {
         self.book.others_json(from, count)
@@ -325,6 +325,13 @@ impl PlaceNames {
     /// given.
     pub fn place(&mut self, j: usize, year: f64) -> String {
         self.book.place_json(j, year)
+    }
+
+    /// Name `j`'s story in `year`: its parts with their roles and
+    /// meanings, and its form over time with the rules of each step, JSON
+    /// (`NameBook::story_json`, TEG-141); null before it was given.
+    pub fn story(&mut self, j: usize, year: f64) -> String {
+        self.book.story_json(j, year)
     }
 }
 

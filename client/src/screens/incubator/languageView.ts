@@ -1,5 +1,5 @@
-import type { LanguageDetail, LanguageLevel, LanguageNode, LanguageView, NameEntry, OtherName } from '../../ui/languagePanel/languageTypes'
-import { LANGUAGE_LEVEL, NAME_KINDS, type LanguagesTree } from './historyPack'
+import type { LanguageDetail, LanguageLevel, LanguageNode, LanguageView, NameEntry, NamePart, NameStory, OtherName } from '../../ui/languagePanel/languageTypes'
+import { LANGUAGE_LEVEL, NAME_HOW, NAME_KINDS, type LanguagesTree } from './historyPack'
 import type { LogEvent } from './historyLogShared'
 import { KEEP_YEARS } from './peopleShared'
 import type { PeoplesWithoutIds } from './incubatorWorker'
@@ -51,8 +51,9 @@ export interface LanguagesMade {
 // place gave it. THE OTHER NAMES (TEG-142, TEG-143; the crate's
 // name_contact.rs): by name its chain from its first name (how it came,
 // historyPack.ts NAME_HOW or NAME_FIRST; the node; the year; its form when
-// the next one came) and its exonyms (how, the node, the year, the forms
-// over time). The names are the world's content: no i18n.
+// the next one came; the meaning of its head word, null for none) and its
+// exonyms (how, the node, the year, the forms over time). The names are
+// the world's content: no i18n.
 export interface HistoryNames {
   kind: Uint8Array
   town: Uint8Array
@@ -74,6 +75,7 @@ export interface NameChainEntry {
   namer: number
   year: number
   form: string
+  head: string | null
 }
 export interface NameExonym extends NameForms {
   how: number
@@ -83,15 +85,24 @@ export interface NameExonym extends NameForms {
 
 // The crate's names over time (`PlaceNames.forms`, by name [year, form,
 // …]) and other names (`PlaceNames.others`), as HistoryNames holds them.
-export type OthersRaw = { chain: [number, number, number, string][]; exonyms: [number, number, number, (number | string)[]][] }[]
+export type OthersRaw = { chain: [number, number, number, string, string | null][]; exonyms: [number, number, number, (number | string)[]][] }[]
 export function formsOf(list: (number | string)[]): NameForms {
   return { years: list.filter((_, k) => k % 2 === 0) as number[], forms: list.filter((_, k) => k % 2 === 1) as string[] }
 }
 export function otherNamesOf(others: OthersRaw): Pick<HistoryNames, 'chain' | 'exonyms'> {
   return {
-    chain: others.map((o) => o.chain.map(([how, namer, year, form]) => ({ how, namer, year, form }))),
+    chain: others.map((o) => o.chain.map(([how, namer, year, form, head]) => ({ how, namer, year, form, head: head ?? null }))),
     exonyms: others.map((o) => o.exonyms.map(([how, namer, year, list]) => ({ how, namer, year, ...formsOf(list) }))),
   }
+}
+
+// A name's story as the crate gives it (`PlaceNames.story`, TEG-141): the
+// node of the tree that gave the entry current then, by its index.
+export interface NameStoryRaw {
+  namer: number
+  year: number
+  parts: NamePart[]
+  steps: { year: number; form: string; rules: string[] }[]
 }
 
 // A form over time in `year`: the form of the last span begun by then.
@@ -154,7 +165,16 @@ const protoId = (k: number): string => `f${k}p`
 // dialect: a language, or a family's proto-language.
 const spokenId = (tree: LanguagesTree, k: number): string => (tree.level[k] === LANGUAGE_LEVEL.family ? protoId(k) : viewId(tree, k))
 
-export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: readonly LogEvent[]; start: number; end: number; languages: HistoryLanguages }): LanguageView {
+// `places`, where the screen has them: the names' stories (the worker's
+// book, TEG-141: null where it has none), and where the cells lie
+// (LanguageView.cellAt, aspect).
+export interface LanguagePlaces {
+  story?: (index: number, year: number) => Promise<NameStoryRaw | null>
+  cellAt?: (cell: number) => { u: number; v: number } | null
+  aspect?: number
+}
+
+export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: readonly LogEvent[]; start: number; end: number; languages: HistoryLanguages }, places: LanguagePlaces = {}): LanguageView {
   const { tree: peoplesTree, log } = history
   const { tree, made } = history.languages
   const times = keptTimes(history.start, history.end)
@@ -239,9 +259,10 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
     const kind = NAME_KINDS[names!.kind[j]]
     const chain = names!.chain[j]
     // Its older names, the latest first; its exonyms by then.
-    const older: OtherName[] = chain.slice(0, c).reverse().map((e) => ({ name: e.form, language: nodeIdOf(e.namer) }))
-    const exonyms: OtherName[] = names!.exonyms[j].filter((e) => e.year <= year).map((e) => ({ name: formIn(e, year), language: nodeIdOf(e.namer) }))
-    return { name: nameAt(names!, j, year) ?? '', kind: kind === 'village' && names!.town[j] ? 'town' : kind, language: nodeIdOf(chain[c].namer), cell: names!.cell[j], given: chain[c].year, older, exonyms }
+    // An older name's `how`: what the people after did with it.
+    const older: OtherName[] = chain.slice(0, c).map((e, i) => ({ name: e.form, language: nodeIdOf(e.namer), how: NAME_HOW[chain[i + 1].how] })).reverse()
+    const exonyms: OtherName[] = names!.exonyms[j].filter((e) => e.year <= year).map((e) => ({ name: formIn(e, year), language: nodeIdOf(e.namer), how: NAME_HOW[e.how] }))
+    return { name: nameAt(names!, j, year) ?? '', kind: kind === 'village' && names!.town[j] ? 'town' : kind, language: nodeIdOf(chain[c].namer), cell: names!.cell[j], given: chain[c].year, older, exonyms, index: j, head: chain[c].head }
   }
   const detailOf = new Map<string, number>()
   for (let k = 0; k < count; k++) {
@@ -273,6 +294,12 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
       return found
     },
     peopleName: (p) => made.peoples[p] || String(p + 1),
+    ...(places.story ? { story: async (row: NameEntry, year: number): Promise<NameStory | null> => {
+      if (row.index === undefined) return null
+      const raw = await places.story!(row.index, year)
+      return raw ? { language: nodeIdOf(raw.namer), year: raw.year, parts: raw.parts, steps: raw.steps } : null
+    } } : {}),
+    ...(places.cellAt ? { cellAt: places.cellAt, aspect: places.aspect ?? 1 } : {}),
   }
 }
 

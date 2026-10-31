@@ -56,6 +56,7 @@ use crate::language::{
 };
 use crate::log::LogEvent;
 use crate::peoples::Tree;
+use crate::place_names::line_changes;
 use casas_generator::core::js;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
@@ -241,6 +242,17 @@ pub struct Speech {
     pub lang: Language,
     pub applied: Vec<Change>,
     pub own: Vec<(Dated, Option<(Word, Word)>)>,
+}
+
+/// What became of a word of a node's lexicon (`Languages::lexicon_history`,
+/// TEG-141): the year its line took a new word for the meaning (None: the
+/// family's proto-language's word, inherited), and the sound changes that
+/// changed it since, by their index in the line (`Speech::applied`, the
+/// order of place_names.rs `line_changes`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WordHistory {
+    pub new: Option<f64>,
+    pub changes: Vec<usize>,
 }
 
 // The world's seed in 32 bits.
@@ -638,18 +650,57 @@ impl Languages {
     /// their order (a change before a word of the same year). Kept in
     /// `cache`: a node's description must be whole when it is asked for.
     pub fn speech(&self, k: usize, t: f64, cache: &mut Cache) -> Speech {
-        if let Some(sp) = cache.speeches.get(&(k, t.to_bits())) {
+        self.replay(k, t, cache, None)
+    }
+
+    /// A node's language at year `t` (`speech`) and what became of each
+    /// word of its lexicon (`WordHistory`, in the lexicon's order): for the
+    /// languages window's comparison (TEG-141). Made again, not kept.
+    pub fn lexicon_history(
+        &self,
+        k: usize,
+        t: f64,
+        cache: &mut Cache,
+    ) -> (Speech, Vec<WordHistory>) {
+        let mut history = Vec::new();
+        let sp = self.replay(k, t, cache, Some(&mut history));
+        (sp, history)
+    }
+
+    // `speech`, with the words' history where asked for (then the
+    // speeches of the line are made again, not taken from the cache).
+    fn replay(
+        &self,
+        k: usize,
+        t: f64,
+        cache: &mut Cache,
+        mut history: Option<&mut Vec<WordHistory>>,
+    ) -> Speech {
+        if history.is_none()
+            && let Some(sp) = cache.speeches.get(&(k, t.to_bits()))
+        {
             return sp.clone();
         }
         let node = &self.nodes[k];
         let mut sp = match node.level {
-            Level::Family => Speech {
-                lang: cache.proto(node.seed).clone(),
-                applied: Vec::new(),
-                own: Vec::new(),
-            },
-            Level::Language => self.speech(node.parent as usize, node.from, cache),
-            Level::Dialect => self.speech(node.parent as usize, t, cache),
+            Level::Family => {
+                let sp = Speech {
+                    lang: cache.proto(node.seed).clone(),
+                    applied: Vec::new(),
+                    own: Vec::new(),
+                };
+                if let Some(h) = history.as_deref_mut() {
+                    *h = vec![WordHistory::default(); sp.lang.lexicon().len()];
+                }
+                sp
+            }
+            Level::Language => self.replay(
+                node.parent as usize,
+                node.from,
+                cache,
+                history.as_deref_mut(),
+            ),
+            Level::Dialect => self.replay(node.parent as usize, t, cache, history.as_deref_mut()),
         };
         sp.own.clear();
         let all = changes();
@@ -659,31 +710,65 @@ impl Languages {
         } else {
             Some(cache.proto(self.nodes[self.family_of(k)].seed).clone())
         };
-        let put = |sp: &mut Speech, x: &NewWord| {
+        // A new word put; true where the meaning has one now.
+        let put = |sp: &mut Speech, x: &NewWord| -> bool {
             let m = &meanings[x.meaning].id;
             if let Some(word) = new_word(proto.as_ref().unwrap(), node.seed, m, x.year, &sp.applied)
             {
                 sp.lang.set_word(m, word);
+                return true;
             }
+            false
         };
+        let word_put =
+            |sp: &mut Speech, x: &NewWord, history: &mut Option<&mut Vec<WordHistory>>| {
+                if put(sp, x)
+                    && let Some(h) = history.as_deref_mut()
+                    && let Some(i) = sp
+                        .lang
+                        .lexicon()
+                        .iter()
+                        .position(|(m, _)| *m == meanings[x.meaning].id)
+                {
+                    h[i] = WordHistory {
+                        new: Some(x.year),
+                        changes: Vec::new(),
+                    };
+                }
+            };
         let (mut c, mut w) = (0, 0);
         loop {
             let next_c = node.changes.get(c).filter(|d| d.year <= t);
             let next_w = node.words.get(w).filter(|x| x.year <= t);
             match (next_c, next_w) {
                 (Some(d), Some(x)) if x.year < d.year => {
-                    put(&mut sp, x);
+                    word_put(&mut sp, x, &mut history);
                     w += 1;
                 }
                 (Some(d), _) => {
                     let change = all[d.change].with_choice(d.choice);
+                    let before: Option<Vec<Vec<Phoneme>>> = history.is_some().then(|| {
+                        sp.lang
+                            .lexicon()
+                            .iter()
+                            .map(|(_, w)| w.sounds.clone())
+                            .collect()
+                    });
                     let first = sp.lang.sound_change(&change);
+                    if let (Some(h), Some(before)) = (history.as_deref_mut(), before) {
+                        let index = sp.applied.len();
+                        for (i, (_, w)) in sp.lang.lexicon().iter().enumerate() {
+                            if w.sounds != before[i] {
+                                h[i].changes.push(index);
+                            }
+                        }
+                    }
                     sp.applied.push(change);
                     sp.own.push((d.clone(), first));
                     c += 1;
                 }
                 (None, Some(x)) => {
-                    put(&mut sp, x);
+                    word_put(&mut sp, x, &mut history);
                     w += 1;
                 }
                 (None, None) => break,
@@ -693,8 +778,44 @@ impl Languages {
         if sp.lang.spelling.style != node.style {
             sp.lang.respell(node.style);
         }
-        cache.speeches.insert((k, t.to_bits()), sp.clone());
+        if history.is_none() {
+            cache.speeches.insert((k, t.to_bits()), sp.clone());
+        }
         sp
+    }
+
+    /// An inherited word of node k replayed alone (the check of
+    /// `lexicon_history`, TEG-141): the family's proto-language's word for
+    /// meaning m through every sound change of the node's line to its last
+    /// year (place_names.rs `line_changes`), word by word with
+    /// `apply_change`, and the indices in the line of the changes that
+    /// changed it. None where the proto-language has no word for m.
+    pub fn inherited_word(
+        &self,
+        k: usize,
+        m: &str,
+        cache: &mut Cache,
+    ) -> Option<(Word, Vec<usize>)> {
+        let mut w = cache
+            .proto(self.nodes[self.family_of(k)].seed)
+            .root(m)?
+            .clone();
+        let mut hit = Vec::new();
+        for (i, d) in line_changes(self, k, f64::NEG_INFINITY, self.nodes[k].until)
+            .iter()
+            .enumerate()
+        {
+            let c = changes()[d.change].with_choice(d.choice);
+            if !c.may_change(&w.sounds) {
+                continue;
+            }
+            let next = apply_change(&c, &w);
+            if next.sounds != w.sounds {
+                hit.push(i);
+                w = next;
+            }
+        }
+        Some((w, hit))
     }
 
     // A node's description drawn: its dated changes and new words.
@@ -786,7 +907,11 @@ impl Languages {
         for k in 0..self.nodes.len() {
             let node = &self.nodes[k];
             let proto = cache.proto(self.nodes[self.family_of(k)].seed).clone();
-            let sp = self.speech(k, node.until, &mut cache);
+            let (sp, history) = if node.level == Level::Dialect {
+                (self.speech(k, node.until, &mut cache), Vec::new())
+            } else {
+                self.lexicon_history(k, node.until, &mut cache)
+            };
             let name = match node.level {
                 Level::Family => people_name(&proto, 0).form(&proto),
                 _ => form_in(&people_name(&proto, node.people as u32 + 1), &sp),
@@ -794,7 +919,8 @@ impl Languages {
             let detail = if node.level == Level::Dialect {
                 Value::Null
             } else {
-                detail(&sp)
+                let line = line_changes(self, k, f64::NEG_INFINITY, node.until);
+                detail(&sp, &history, &line, &proto)
             };
             nodes.push(json!({ "name": name, "detail": detail }));
         }
@@ -848,7 +974,33 @@ pub fn tree_json(peoples: &[PeopleInput], seed: f64, start: f64, end: f64) -> St
         e.write(&mut j);
     }
     j.close_array();
-    format!("{{\"arrays\":{arrays},\"log\":{}}}", j.out)
+    // The check of the view's lexicon (TEG-141): by word of a family's
+    // proto-language and a language, as the tree reads back, [node,
+    // meaning, the proto-language's word through the line (spelt in the
+    // node's spelling), the indices of the changes that changed it, the
+    // proto-language's word (spelt in its spelling)] (`inherited_word`).
+    let back = Languages::unpack(&p).expect("the packed tree reads back");
+    let mut cache = Cache::default();
+    let mut replayed = Vec::new();
+    for k in 0..back.nodes.len() {
+        if back.nodes[k].level == Level::Dialect {
+            continue;
+        }
+        let sp = back.speech(k, back.nodes[k].until, &mut cache);
+        let proto = cache.proto(back.nodes[back.family_of(k)].seed).clone();
+        for (m, _) in sp.lang.lexicon() {
+            let Some((w, hit)) = back.inherited_word(k, m, &mut cache) else {
+                continue;
+            };
+            let root = proto.word(m).map(|x| proto.spell(x));
+            replayed.push(json!([k, m, sp.lang.spell(&w.sounds), hit, root]));
+        }
+    }
+    format!(
+        "{{\"arrays\":{arrays},\"log\":{},\"lexicon\":{}}}",
+        j.out,
+        Value::Array(replayed)
+    )
 }
 
 /// The proto-languages, and the nodes' speech by node and year, made
@@ -1005,7 +1157,13 @@ fn round2(x: f64) -> f64 {
 
 // What the window shows of a language (languageTypes.ts LanguageDetail,
 // without its id).
-fn detail(sp: &Speech) -> Value {
+// With the whole lexicon (TEG-141): by word, `new` (the year its line
+// took a new word for the meaning, null for the proto-language's),
+// `changes` (the indices in `line` of the sound changes that changed it)
+// and `proto` (an inherited word's form in the proto-language, spelt as
+// the proto-language spelt it; null for a new word); and the line's sound
+// changes from the proto-language on (`line`: year, rule, template).
+fn detail(sp: &Speech, history: &[WordHistory], line: &[Dated], proto: &Language) -> Value {
     let lang = &sp.lang;
     let k = kit();
     let spell = |w: &[Phoneme]| lang.spell(w);
@@ -1072,7 +1230,23 @@ fn detail(sp: &Speech) -> Value {
     let lexicon: Vec<Value> = lang
         .lexicon()
         .iter()
-        .map(|(m, w)| json!({ "meaning": m, "word": spell(&w.sounds) }))
+        .enumerate()
+        .map(|(i, (m, w))| {
+            let h = history.get(i).cloned().unwrap_or_default();
+            let root = if h.new.is_none() {
+                proto.word(m).map(|w| proto.spell(w))
+            } else {
+                None
+            };
+            json!({ "meaning": m, "word": spell(&w.sounds), "new": h.new, "changes": h.changes, "proto": root })
+        })
+        .collect();
+    let line_list: Vec<Value> = line
+        .iter()
+        .map(|d| {
+            let t = &k.changes.changes[d.change];
+            json!({ "year": d.year, "rule": t.rule, "template": t.id })
+        })
         .collect();
     let g = &lang.grammar;
     let mut samples = Vec::new();
@@ -1108,6 +1282,7 @@ fn detail(sp: &Speech) -> Value {
         "changes": changes_list,
         "lexicon": lexicon,
         "lexiconSize": lang.lexicon().len(),
+        "line": line_list,
         "pattern": {
             "order": if g.adj_after { "headFirst" } else { "modifierFirst" },
             "joint": if g.joiner_sounds.is_empty() { Value::Null } else { Value::String(spell(&g.joiner_sounds)) },
@@ -1224,5 +1399,58 @@ mod tests {
         );
         // The same seed, the same tree.
         assert_eq!(Languages::build(&sample(), 42.0, 0.0, 6000.0).0, tree);
+    }
+
+    // TEG-141: an inherited word is the proto-language's through the
+    // line's sound changes, and its `changes` are exactly those that
+    // changed it (apply_change, word by word, not the language's replay); a
+    // new word is changed only by the changes after its year.
+    #[test]
+    fn the_lexicon_history_follows_the_line() {
+        let (tree, _) = Languages::build(&sample(), 42.0, 0.0, 6000.0);
+        let mut cache = Cache::default();
+        let (mut inherited, mut changed, mut new) = (0, 0, 0);
+        for k in 0..tree.nodes.len() {
+            let node = &tree.nodes[k];
+            if node.level == Level::Dialect {
+                continue;
+            }
+            let (sp, history) = tree.lexicon_history(k, node.until, &mut cache);
+            let speech = tree.speech(k, node.until, &mut cache);
+            assert_eq!(
+                format!("{:?}", sp.lang.lexicon()),
+                format!("{:?}", speech.lang.lexicon())
+            );
+            let line = line_changes(&tree, k, f64::NEG_INFINITY, node.until);
+            assert_eq!(line.len(), sp.applied.len());
+            for (d, c) in line.iter().zip(&sp.applied) {
+                assert_eq!(
+                    format!("{:?}", changes()[d.change].with_choice(d.choice)),
+                    format!("{c:?}")
+                );
+            }
+            let proto = cache.proto(tree.nodes[tree.family_of(k)].seed).clone();
+            assert_eq!(history.len(), sp.lang.lexicon().len());
+            for ((m, word), h) in sp.lang.lexicon().iter().zip(&history) {
+                match h.new {
+                    None => {
+                        inherited += 1;
+                        let (w, hit) = tree.inherited_word(k, m, &mut cache).unwrap();
+                        assert!(proto.root(m).is_some());
+                        assert_eq!(w.sounds, word.sounds, "{m} in node {k}");
+                        assert_eq!(hit, h.changes, "{m} in node {k}");
+                        changed += (!hit.is_empty()) as usize;
+                    }
+                    Some(year) => {
+                        new += 1;
+                        assert!(h.changes.iter().all(|&i| line[i].year >= year));
+                    }
+                }
+            }
+        }
+        assert!(
+            inherited > 0 && changed > 0 && new > 0,
+            "{inherited} {changed} {new}"
+        );
     }
 }
