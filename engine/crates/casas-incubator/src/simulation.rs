@@ -51,7 +51,7 @@
 
 use crate::climate_history::{
     COLD_SPELL_DRY, COLD_SPELL_YEARS, ClimateHistory, ICE_REACH_KM, Rebound, cold_share,
-    cold_spells, drying_start, humid_gain, ice_may_cover, spell_cold, wetness,
+    cold_spells, drying_start, humid_gain, ice_may_cover, is_desert, spell_cold, wetness,
 };
 use crate::eruptions::{
     ERUPTION_TOLD_PEOPLE, Eruption, FISSURE_TOLD_SHARE, ash_of, ash_years, eruption_cold,
@@ -329,6 +329,17 @@ pub(crate) const SETTLED_YEARS: f64 = 5000.0;
 pub(crate) const FARM_RATE: f64 = 0.3;
 pub(crate) const HERD_RATE: f64 = 0.1;
 pub(crate) const CENTRE_CROPS: usize = 2;
+// 0.5 kept (TEG-10, 2026-10-31). On the v15 ecology (level 1 of
+// 2026-10-31) 16.9, 37.7 and 8.2 % of the land of Morvane, Thalassor and
+// Zephyra has arable land of 0.5 or more (some 1 % on v14), but the
+// centres stay few: over the origins that farm (6, 7 and 5, with the
+// rain) 3 to 4, 1 to 2 and 2 to 3 farming centres, 1 to 3, 0 to 1 and 0
+// to 1 herding centres. At 0.6 the first farming came at the same time
+// and the farming centres were 2 to 4, 1 to 2 and 2: CENTRE_SPACING_KM,
+// the wild crops and the stable climate bind, not the arable land. No
+// farming centre in a desert (BW; decided 2026-10-30, DES-0032: on the
+// earth the Nile was no origin, the fields came from the Levant): none
+// came there before (the wild crops), the rule makes it sure.
 pub(crate) const CENTRE_ARABLE: f64 = 0.5;
 pub(crate) const CENTRE_HERDS: usize = 2;
 pub(crate) const CENTRE_PASTURE: f64 = 0.5;
@@ -340,6 +351,19 @@ pub(crate) const FARM_KM_A: f64 = 1.0;
 pub(crate) const HERD_KM_A: f64 = 2.0;
 pub(crate) const FARM_BARRIER: f64 = 5.0;
 pub(crate) const HERD_BARRIER: f64 = 3.0;
+// FARM_ARABLE is held against a cell's best share of arable land over
+// its land nodes, not its mean (TEG-10, 2026-10-31, decided 2026-10-30;
+// habitat.rs `arable_best`): a floodplain some km wide is a small part
+// of a cell of 10 km, and the mean dilutes it. What the fields carry
+// keeps the mean (`gain`). On the three v15 worlds the land at 0.3 or
+// more by the mean 33.3, 57.6 and 17.4 %, by the best 36.9, 61.9 and
+// 19.2 %; in the deserts (BW) 1.9, 1.0 and 4.1 % → 2.8, 1.8 and 5.5 %
+// (78 000, 21 000 and 476 000 km²). The wild crops' niche suits 12 000,
+// 8 000 and 149 000 km² of these: the crops, not the arable land, keep
+// the fields from most desert floodplains. The deserts farmed at the
+// end (the own origin, with the rain) 3 500 → 3 500, 0 → 1 200 and
+// 30 000 → 63 000 km²; all the land farmed 12.2 → 12.6, 35.9 → 36.9 and
+// 9.1 → 9.8 %.
 pub(crate) const FARM_ARABLE: f64 = 0.3;
 pub(crate) const HERD_PASTURE: f64 = 0.3;
 pub(crate) const FARM_GAIN: f64 = 100.0;
@@ -493,6 +517,24 @@ pub(crate) const COPPER_SHARE: f64 = 0.1;
 pub(crate) const SMELT_SHARE: f64 = 0.25;
 pub(crate) const TOWN_GROWTH_A: f64 = 0.0005;
 pub(crate) const CITY_PEOPLE: f64 = 10_000.0;
+/// THE LATEST CITY (TEG-10, 2026-10-31): step 3 needs a first city, so
+/// step 2 has one. Where no town has grown to CITY_PEOPLE this many years
+/// after step 2's start, the largest town is the city; where no farmers'
+/// village stands then, the village or camp that draws the most people.
+/// A fixed span, not a time after the farming or the smelting: these do
+/// not come on every world (a world of herders only, a world whose copper
+/// no village reaches). On the earth the first city came some 7 000 years
+/// after the Holocene's start (DES-0035); 20 000 lets a world without
+/// good land be some three times as late. The three v15 worlds (level 1
+/// with the volcanoes' activity, the rain, eight origins each, the own
+/// origin, five cells of the largest landmass and two of the second)
+/// all have their city by CITY_PEOPLE at +4 500 to +9 500 where they
+/// farm, the town then 10 040 to 11 021: the deadline does not bind on
+/// them. It binds on Zephyra from 1 263 679 (a landmass of 1.7 M km²,
+/// herders only, no farmers' village; the history ran to SPAN_YEARS
+/// before): a camp of 37 people at +20 000. An origin whose people die
+/// out in step 1 (5 of the 24) has no city still, and runs to SPAN_YEARS.
+pub(crate) const CITY_LATEST_YEARS: f64 = 20_000.0;
 
 fn camp_least(way: u8) -> f64 {
     if way == FORAGERS { 0.1 } else { 0.3 }
@@ -1059,7 +1101,7 @@ impl Sim<'_, '_> {
     fn suits(&self, d: usize, cell: usize) -> bool {
         let c = self.codes_of(d)[cell];
         if self.tamed[d].plant {
-            (c == 1 || c >= plant_suits_code()) && self.eco(ARABLE, cell) >= FARM_ARABLE
+            (c == 1 || c >= plant_suits_code()) && self.h.arable_best(cell) >= FARM_ARABLE
         } else {
             c >= 1 && self.eco(PASTURE, cell) >= HERD_PASTURE
         }
@@ -2207,6 +2249,7 @@ pub fn simulate(
                     && sim.farm_at[i] == f32::INFINITY
                     && knowledge[gu] as f64 >= KNOW_FARM
                     && sim.eco(ARABLE, i) >= CENTRE_ARABLE
+                    && !is_desert(h.koppen[i])
                 {
                     let wild = input
                         .crops
@@ -2463,10 +2506,22 @@ pub fn simulate(
                     smelted,
                 });
             }
-            // The towns, and the first city: the history's end.
-            let seats: Vec<usize> = (0..village_to.len())
-                .filter(|&v| village_to[v] == f64::INFINITY && villages[2 * v + 1] as u8 == FARMERS)
+            // The towns, and the first city: the history's end. At
+            // CITY_LATEST_YEARS the largest town is the city; where no
+            // farmers' village stands then, the villages and camps that
+            // stand are the seats.
+            let late = t - t0 >= CITY_LATEST_YEARS;
+            let standing = |v: usize, farmers: bool| {
+                village_to[v] == f64::INFINITY && (!farmers || villages[2 * v + 1] as u8 == FARMERS)
+            };
+            let mut seats: Vec<usize> = (0..village_to.len())
+                .filter(|&v| standing(v, true))
                 .collect();
+            if late && seats.is_empty() {
+                seats = (0..village_to.len())
+                    .filter(|&v| standing(v, false))
+                    .collect();
+            }
             let seat_cells: Vec<usize> = seats.iter().map(|&v| villages[2 * v] as usize).collect();
             let touched = within_days(
                 h,
@@ -2502,6 +2557,13 @@ pub fn simulate(
                 town[v] += (share * hinterland[k] - town[v]) * town_grow;
                 if town[v] >= CITY_PEOPLE && city.is_none_or(|(_, most)| town[v] > most) {
                     city = Some((cell, town[v]));
+                }
+            }
+            if city.is_none() && late {
+                for (k, &v) in seats.iter().enumerate() {
+                    if city.is_none_or(|(_, most)| town[v] > most) {
+                        city = Some((seat_cells[k], town[v]));
+                    }
                 }
             }
             if let Some((cell, people)) = city {

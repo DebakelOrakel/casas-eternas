@@ -161,7 +161,8 @@ function synthWorld(kind) {
     // seed 29 tells no merge; of the seeds 1 to 12 only 5 and 6 reach all
     // three. Since the post-glacial rebound (TEG-22, 2026-10-31) seed 5
     // and 6 give no herding centre and no told merge; of the seeds 1 to 14
-    // only 4 reaches all three.
+    // only 4 reaches all three. Since the latest city (TEG-10,
+    // 2026-10-31) the sphere's history ends at +20 000.
     seed: kind === 'sphere' ? 4 : 12345,
   }
 }
@@ -386,8 +387,14 @@ for (const kind of ['torus', 'sphere']) {
 // (2026-10-30, TEG-99); seed 5 since the dry shelf's ecology (TEG-13), seed 4
 // since the post-glacial rebound (TEG-22). Seed 4 also tells a people
 // THE WAVES took as replaced (TEG-14, 2026-10-31: 2 merges and 1
-// replacement, 3 merges before). Also in peoples.rs
+// replacement, 3 merges before). Since the latest city (TEG-10,
+// 2026-10-31: simulation.rs CITY_LATEST_YEARS) the sphere's history ends
+// at +20 000, not at SPAN_YEARS: seed 4 tells 1 split, 2 merges and no
+// replacement; the torus, whose short step 2 now tells the splits and
+// merges that held to its end (TEG-11), 3 splits and 2 replacements.
+// Also in peoples.rs
 // `a_split_is_told_once_it_held`,
+// `a_split_that_held_to_a_short_history_s_end_is_told`,
 // `the_tree_keeps_ids_and_records_splits_and_merges` and
 // `a_people_the_waves_took_is_told_replaced`.
 const reaches = ['departure', 'trade', 'crossing', 'centre 3', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleSplit', 'peopleMerged', 'peopleReplaced', 'peopleGone', 'peopleFarmers', 'goods']

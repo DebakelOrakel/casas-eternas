@@ -142,6 +142,12 @@ pub struct Habitat {
     pub landmass_km2: Vec<f64>,
     /// CELL_ECOLOGY's fields, each the mean over the cell's land.
     pub ecology: [Option<Vec<f32>>; 8],
+    /// The arable land's best share over the cell's land nodes (0 at
+    /// sea); None where the level holds no arable land. The fields spread
+    /// where it suits them (simulation.rs `suits`, TEG-10): a floodplain
+    /// some km wide is a small part of a cell of CELL_SPACING_KM, and the
+    /// mean dilutes it.
+    pub arable_best: Option<Vec<f32>>,
     /// A sea cell's carrying capacity with the dry shelf as land, the mean
     /// over its shelf texels (0 for a cell without one; 0 on the land);
     /// None where the level does not hold it.
@@ -178,6 +184,13 @@ impl Habitat {
         self.ecology[field].as_ref().map_or(0.0, |f| f[i] as f64)
     }
 
+    /// The arable land's best share over the cell's land nodes
+    /// (`arable_best`); 0 where the level holds no arable land.
+    #[inline]
+    pub fn arable_best(&self, i: usize) -> f64 {
+        self.arable_best.as_ref().map_or(0.0, |b| b[i] as f64)
+    }
+
     pub fn has(&self, field: usize) -> bool {
         self.ecology[field].is_some()
     }
@@ -205,6 +218,7 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
     let mut lake = vec![0u8; n];
     let mut any_land_node = vec![-1i32; n];
     let mut sums: Vec<Vec<f64>> = (0..CELL_ECOLOGY.len()).map(|_| vec![0.0; n]).collect();
+    let mut arable_best = input.ecology[ARABLE].map(|_| vec![0f32; n]);
     let mut shelf_sum = vec![0f64; n];
     let mut shelf_texels = vec![0i32; n];
     // The texels of each cell, their land and their sums.
@@ -220,7 +234,13 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
                 if let Some(codes) = codes {
                     let code = codes[v];
                     if code != ECOLOGY_FINE_OCEAN {
-                        sums[k][c] += decode_fine_value(code);
+                        let value = decode_fine_value(code);
+                        sums[k][c] += value;
+                        if k == ARABLE
+                            && let Some(best) = arable_best.as_mut()
+                        {
+                            best[c] = js::max(best[c] as f64, value) as f32;
+                        }
                     }
                 }
             }
@@ -305,6 +325,9 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
             }
         } else {
             biome_of[c] = biome::OCEAN;
+            if let Some(best) = arable_best.as_mut() {
+                best[c] = 0.0;
+            }
             let z = if texels[c] > land_texels[c] {
                 z_sea[c]
             } else {
@@ -475,6 +498,7 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
         landmasses,
         landmass_km2: areas,
         ecology,
+        arable_best,
         shelf_carrying,
         nbr_start,
         nbr,

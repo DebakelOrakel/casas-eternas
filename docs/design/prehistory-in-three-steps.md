@@ -743,10 +743,65 @@ Building since 2026-10-27:
   stay the same but Morvane's city, at +5 000 (+4 500); the people at
   the end +3.9 % (500 years more), +0.03 %, +0.08 %. A level 1 without the volcanoes'
   activity (made before 2026-10-30) gives no eruption and the same bits.
+- 2026-10-31 (v6 still): step 2 retuned on the v15 ecology (TEG-10) and
+  more of the peoples' splits and merges told (TEG-11). Measured on the
+  level 1 of the three worlds made again with the volcanoes' activity
+  (TEG-131), with the rain, eight origins a world: the own origin, five
+  cells of the largest landmass, two of the second. Step 2 is short on
+  them: from step 2's start, where the people farm (Morvane 6 origins,
+  Thalassor 7, Zephyra 5), the first farming at +500 to +3 000, the
+  copper at +2 500 to +6 500 (none before the city from 1 of 6, 0 of 7,
+  2 of 5; 3 of 5 on Zephyra before), the smelting at +5 500 to +9 500
+  from 4 of 6 and 6 of 7, none on Zephyra, at or before the city; the
+  city at +4 500 to +9 500, all by CITY_PEOPLE (the town 10 040 to
+  11 021). Not pulled toward the earth's: a city without the
+  copper stands in the Americas too (Teotihuacan). Zephyra's first
+  farming centres are 2 200 to 2 400 km from copper of COPPER_RICH; its
+  copper comes with a later centre 40 km from it, or not before the
+  city. Four changes. (1) The fields spread where a cell's best share of
+  arable land over its land nodes reaches FARM_ARABLE, not its mean
+  (habitat.rs `arable_best`; open item 8); what the fields carry keeps
+  the mean. The deserts (BW) with arable land of 0.3 or more 2.8, 1.8,
+  5.5 % of their area by the best (1.9, 1.0, 4.1 % by the mean); the wild
+  crops suit 12 000, 8 000 and 149 000 km² of these, and the crops, not
+  the arable land, keep the fields from most desert floodplains. The
+  deserts farmed (own origin) 3 500 → 3 500, 0 → 1 200, 30 000 → 63 000
+  km²; the land farmed 12.2 → 12.6, 35.9 → 36.9, 9.1 → 9.8 %. (2) No
+  farming centre in a desert (BW), as decided; none came there before.
+  (3) THE LATEST CITY (simulation.rs CITY_LATEST_YEARS): where no town
+  is a city 20 000 years after step 2's start, the largest town is;
+  without a farmers' village, the village or camp that draws the most
+  people. It binds on none of the origins that farm; on Zephyra's
+  herders-only origin 1 263 679 (a landmass of 1.7 M km²; to SPAN_YEARS
+  before) a camp of 37 people is the city at +20 000. An origin whose
+  people die out in step 1 (5 of the 24) has no city still. (4) A short
+  step 2 tells at its end the splits and merges that held to it and
+  TOLD_SPAN_SHARE (0.4) of its length, TOLD_LIVES_YEARS at most; a split
+  as many years after step 2's start, EARLY_SPLIT_YEARS at most
+  (peoples.rs `Tree::finish`). A step 2 of 12 500 years or more tells
+  the same. Told splits / merges / replacements, before → after: Morvane
+  0/0/0 → 11 to 19 / 0 to 2 / 1 to 7, Thalassor 0/0/0 → 6 to 19 / 0 to 2
+  / 0 to 3, Zephyra 0/0/0 → 5 to 27 / 0 / 0 to 5 (the herders' origin
+  4/1/2 as before). At 0.3 Morvane's own origin told 37 / 2 / 13: THE
+  WAVES make 5 to 10 splits every 500 years all through step 2. The
+  splits told fall in 0.4 to 0.6 of step 2. CENTRE_ARABLE stays 0.5:
+  16.9, 37.7 and 8.2 % of the land has arable land of 0.5 or more, but
+  3 to 4, 1 to 2 and 2 to 3 farming centres come (1 to 3, 0 to 1, 0 to
+  1 herding); at 0.6 2 to 4, 1 to 2 and 2, at the same times. The
+  number of peoples stays: 200 to 219, 98 to 127 and 138 to 151 big
+  peoples at the end (Morvane, Thalassor, Zephyra; 98 to 114 on
+  Thalassor's main landmass, the earth's 3 to 10 a million km² at its
+  low end). The people at the end +1 to +12 %, the times the same but
+  Zephyra's own origin (copper and city at +6 500; no copper, the city
+  at +5 500 before). The smoke test's sphere (seed 4) ends at +20 000
+  now (SPAN_YEARS before): a herding centre, 1 split and 2 merges told.
 
 Open:
 
-1. Step 2's times against the earth's (2026-10-29, Status, v15
+1. Done 2026-10-31 (TEG-10, Status): step 2 retuned on the v15
+   ecology; the world decides its times, every world has a first city
+   (THE LATEST CITY), CENTRE_ARABLE stays. Before:
+   Step 2's times against the earth's (2026-10-29, Status, v15
    ecology, the fronts at their km a year): the farming, the smelting's
    interval and Morvane fit; Thalassor's copper, smelting and city are
    one climate step late (+2 500, +5 500, +7 000: its second centre at
@@ -758,7 +813,9 @@ Open:
    13 to 20 % of the land has arable land of 0.5 or more on the v15
    ecology, 1 % before), the times of the copper and the city, Zephyra's
    city, the number of peoples.
-2. The peoples' splits in the chronicle: few once they must hold 5 000
+2. Done 2026-10-31 (TEG-11, Status): a short step 2 tells the splits
+   and merges that held to its end and TOLD_SPAN_SHARE of it. Before:
+   The peoples' splits in the chronicle: few once they must hold 5 000
    years and not come in step 2's first 5 000 years (1, 1, 6 on the
    three worlds); a lower share of the land lived in to tell
    (SPLIT_TOLD_SHARE) would tell more (2026-10-29).
@@ -780,7 +837,10 @@ Open:
    landmass of 3.7 M km², 14.8 % of the land reached, no city in step 2;
    Zephyra's 7.5 %. Now Morvane 95.4 %, Thalassor 73.1 %, Zephyra
    85.0 %; the largest landmass alone gave Morvane 50.7 %.
-8. No farming centre in the deserts (BW) since the flood silt either
+8. Done 2026-10-31 (TEG-10, Status): the fields spread by the best
+   share, no centre in a desert by rule; the wild crops still keep the
+   fields from most desert floodplains. Before:
+   No farming centre in the deserts (BW) since the flood silt either
    (2026-10-30, Status): the floodplain is narrower than a cell, and a
    cell's arable land is the mean over its land. Decided 2026-10-30: no
    centre in the deserts (on the earth the Nile was no origin; the

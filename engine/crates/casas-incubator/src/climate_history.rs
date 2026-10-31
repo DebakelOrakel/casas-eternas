@@ -474,6 +474,14 @@ pub fn ice_may_cover(koppen: u8) -> bool {
     matches!(group(koppen), b'D' | b'E')
 }
 
+/// Whether a class is a desert (BW): no farming centre there
+/// (simulation.rs CENTRE_ARABLE).
+pub fn is_desert(koppen: u8) -> bool {
+    KOPPEN_CODES
+        .get(koppen as usize)
+        .is_some_and(|c| c.starts_with("BW"))
+}
+
 /// What a cell carries at a cold, as a share of today's: 0 under the ice
 /// (`ice_km`: its distance from today's glaciers over the cold climates,
 /// Infinity where the ice cannot come); `spell` the cold a spell adds to

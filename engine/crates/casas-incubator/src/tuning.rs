@@ -68,7 +68,14 @@ use serde_json::{Map, Value, json};
 /// simulation.rs THE ERUPTIONS, TEG-131, 2026-10-31) from level 1's
 /// volcanoes, their events in the log (a reader that does not know the
 /// new kinds passes over them): a world without volcanoes gives the same
-/// bytes.
+/// bytes; step 2 on the v15 ecology again (TEG-10, 2026-10-31): the
+/// fields spread where a cell's best share of arable land reaches
+/// FARM_ARABLE, not its mean (habitat.rs `arable_best`), no farming
+/// centre in a desert (BW), and the first city at CITY_LATEST_YEARS at
+/// the latest (simulation.rs THE LATEST CITY); in a short step 2 the
+/// chronicle tells the splits and merges that held to its end and
+/// TOLD_SPAN_SHARE of it (peoples.rs `Tree::finish`, TEG-11), a long one
+/// the same events.
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
@@ -135,12 +142,12 @@ pub fn constants() -> Value {
             STONE_CELLS, STONE_CHANCE, CROSSINGS_A_PAIR, VOYAGE_KM,
             COPPER_RICH, COPPER_DAYS, COPPER_VILLAGE_YEARS, COPPER_RATE, COPPER_SPACING_KM, COPPER_KM_A,
             SMELT_AFTER, SMELT_VILLAGE_YEARS, SMELT_RATE, CITY_DAYS, TOWN_SHARE, COPPER_SHARE, SMELT_SHARE,
-            TOWN_GROWTH_A, CITY_PEOPLE,
+            TOWN_GROWTH_A, CITY_PEOPLE, CITY_LATEST_YEARS,
         )),
         "peoples": object(table!(peoples:
             TRAITS, BRANCH_SHARE, BRANCH_ROUNDS, BRANCH_STEP, TRAIT_DRIFT, LANGUAGE_DRIFT, TRAIT_CONTACT, LANGUAGE_CONTACT,
             CONTACT_DAYS, TRAIT_LIKE, PEOPLE_DISTANCE, REPLACE_SHARE, FIELDS_AROUND, FIELDS_AROUND_KM, SPLIT_KM2, WAVE_RATIO, WAVE_CHANCE, WAVE_KM_A,
-            PEOPLE_LEAST, PEOPLE_LEAST_KM2, SPLIT_TOLD_SHARE, FARMERS_TOLD_SHARE, TOLD_LIVES_YEARS, EARLY_SPLIT_YEARS, FARMERS_TOLD,
+            PEOPLE_LEAST, PEOPLE_LEAST_KM2, SPLIT_TOLD_SHARE, FARMERS_TOLD_SHARE, TOLD_LIVES_YEARS, EARLY_SPLIT_YEARS, TOLD_SPAN_SHARE, FARMERS_TOLD,
         )),
         "settle": object(table!(settle:
             CARRYING_FULL, DENSITY_TAU, FORAGER_WEIGHT, LINKS, LINK_DAYS, SOURCE_RICH, SOURCE_DAYS,

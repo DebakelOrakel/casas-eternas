@@ -53,7 +53,8 @@
 //!   merges, replacements, ends and turns to farming, into the history's
 //!   log; a split, a merge or a replacement once it held TOLD_LIVES_YEARS
 //!   by its hearts (THE HOLD, v6), no split in step 2's first
-//!   EARLY_SPLIT_YEARS.
+//!   EARLY_SPLIT_YEARS; in a short step 2, once it held to its end and
+//!   TOLD_SPAN_SHARE of it (`Tree::finish`, TEG-11).
 //!
 //! Measured on Morvane (v14), Thalassor and Zephyra (origin 783 702) on
 //! 2026-10-29 (v5, without the stripes), the peoples of 1 000 people and
@@ -348,6 +349,25 @@ pub const TOLD_LIVES_YEARS: f64 = 5000.0;
 /// 1 (7 000) and 6 (5 000 to 17 500). At 3 000: 9, 3, 9 splits told; at
 /// 5 000: 1, 1, 6.
 pub const EARLY_SPLIT_YEARS: f64 = 5000.0;
+/// A short step 2 (TEG-11, 2026-10-31; `Tree::finish`): at its end the
+/// splits and merges kept back are told where they held to the end and
+/// this share of step 2's length, TOLD_LIVES_YEARS at most; a split
+/// where it came as many years after step 2's start (EARLY_SPLIT_YEARS
+/// at most), a merge where its people lived as many. A step 2 of 12 500
+/// years or more tells the same events as before. Why: on the v15 worlds
+/// step 2 lasts 4 500 to 9 500 years, and EARLY_SPLIT_YEARS and
+/// TOLD_LIVES_YEARS let no split or merge be told in under 10 000. The
+/// history's end is not known while it runs, so the share is applied at
+/// the end alone. With the rain, over the origins that farm (Morvane 6,
+/// Thalassor 7, Zephyra 5), told splits / merges / replacements: 0/0/0
+/// → 11 to 19 / 0 to 2 / 1 to 7, 6 to 19 / 0 to 2 / 0 to 3, 5 to 27 / 0
+/// / 0 to 5. At 0.3 Morvane's own origin told 37 / 2 / 13 (19 / 2 / 7 at
+/// 0.4); at 0.1 some 75 splits held 700 years to the end: THE WAVES
+/// make 5 to 10 splits every 500 years, all through step 2. The splits
+/// told fall in 0.4 to 0.6 of step 2 (on Morvane +3 000 to +4 000 of
+/// 7 000). The long Zephyra of before (16 500 years: 30 splits, 1 merge,
+/// 14 replacements told) tells the same.
+pub const TOLD_SPAN_SHARE: f64 = 0.4;
 /// A big people turns to farming when its farmers' share (by people)
 /// goes from under this to this or more: once a people.
 pub const FARMERS_TOLD: f64 = 0.5;
@@ -1364,12 +1384,23 @@ struct Join {
 // TOLD_LIVES_YEARS: its event; the two hearts (the cells), the parts' at
 // a split, the merged people's and the other's at a merge; whether they
 // are apart (a split) or one (a merge).
+// `after`: a split's years from step 2's start, a merge's people's years
+// lived (TOLD_SPAN_SHARE).
 struct Held {
     event: LogEvent,
     since: f64,
     a: i32,
     b: i32,
     apart: bool,
+    after: f64,
+}
+
+impl Held {
+    // Told when it held `hold` years, of a split after `early` years from
+    // step 2's start, of a merge of a people that lived `hold` years.
+    fn due(&self, early: f64, hold: f64) -> bool {
+        self.after >= if self.apart { early } else { hold }
+    }
 }
 
 impl Default for Tree {
@@ -1668,13 +1699,12 @@ impl Tree {
         let of = |c: i32| if c < 0 { -1 } else { of_cell[c as usize] };
         self.joins.retain(|j| t - j.at < TOLD_LIVES_YEARS);
         if !first {
-            let early = t - self.first_t < EARLY_SPLIT_YEARS;
             for (q, &id) in ids.iter().enumerate() {
                 let m = &now[q];
                 let id = id as usize;
                 if id >= old {
                     let p = self.peoples[id].parent;
-                    if early || p < 0 || at[p as usize] < 0 {
+                    if p < 0 || at[p as usize] < 0 {
                         continue;
                     }
                     let mp = &now[at[p as usize] as usize];
@@ -1682,7 +1712,10 @@ impl Tree {
                         let (x, y) = (of(j.a), of(j.b));
                         j.into == p && ((x, y) == (id as i32, p) || (x, y) == (p, id as i32))
                     });
-                    let again = self.held.iter().any(|h| h.apart && of(h.a) == id as i32);
+                    let again = self
+                        .held
+                        .iter()
+                        .any(|h| h.apart && h.due(EARLY_SPLIT_YEARS, 0.0) && of(h.a) == id as i32);
                     if !undoes && !again && told(m, lived) && told(mp, lived) {
                         self.held.push(Held {
                             event: LogEvent::PeopleSplit {
@@ -1697,6 +1730,7 @@ impl Tree {
                             a: m.centre,
                             b: mp.centre,
                             apart: true,
+                            after: t - self.first_t,
                         });
                     }
                 } else if !self.watch[id].farmed
@@ -1743,7 +1777,7 @@ impl Tree {
                         b: other,
                     });
                 }
-                if !lived_long {
+                if !lived_long && into < 0 {
                     continue;
                 }
                 if into >= 0 {
@@ -1775,6 +1809,7 @@ impl Tree {
                             a: w.last.centre,
                             b: other,
                             apart: false,
+                            after: t - self.peoples[p].born,
                         });
                     }
                 } else if w.told {
@@ -1789,7 +1824,7 @@ impl Tree {
             if x >= 0 && y >= 0 && (x != y) != h.apart {
                 return false;
             }
-            if t - h.since < TOLD_LIVES_YEARS {
+            if t - h.since < TOLD_LIVES_YEARS || !h.due(EARLY_SPLIT_YEARS, TOLD_LIVES_YEARS) {
                 return true;
             }
             log.push(h.event.clone());
@@ -1814,9 +1849,22 @@ impl Tree {
     }
 
     /// At the history's end, after its last step: the peoples gone (`tell`)
-    /// that are alive but not big since a big step. The splits and merges
-    /// still kept back are not told: they did not hold TOLD_LIVES_YEARS.
+    /// that are alive but not big since a big step; the splits and merges
+    /// still kept back that held to the end and TOLD_SPAN_SHARE of the
+    /// history (TOLD_LIVES_YEARS at most), a split after as many years
+    /// from step 2's start (EARLY_SPLIT_YEARS at most), a merge of a
+    /// people that lived as many.
     pub fn finish(&mut self, log: &mut Vec<LogEvent>) {
+        let share = TOLD_SPAN_SHARE * (self.last_t - self.first_t);
+        let (early, hold) = (
+            js::min(EARLY_SPLIT_YEARS, share),
+            js::min(TOLD_LIVES_YEARS, share),
+        );
+        for h in std::mem::take(&mut self.held) {
+            if self.last_t - h.since >= hold && h.due(early, hold) {
+                log.push(h.event);
+            }
+        }
         for &p in &self.alive {
             let w = &self.watch[p as usize];
             if w.told
@@ -2108,6 +2156,7 @@ mod tests {
             landmasses: 1,
             landmass_km2: vec![km2 as f64 * n as f64],
             ecology: [(); 8].map(|_| None),
+            arable_best: None,
             shelf_carrying: None,
             nbr_start,
             nbr,
@@ -2371,6 +2420,50 @@ mod tests {
                 ..
             }]
         ));
+    }
+
+    // One people of six cells; cells 4 and 5 part at 3 000 and stay apart
+    // to the history's end. A history of 6 000 years tells the split at
+    // its end (it held 3 000 years, TOLD_SPAN_SHARE of 6 000 is 2 400);
+    // one of 4 000 does not (1 000 against 1 600).
+    #[test]
+    fn a_split_that_held_to_a_short_history_s_end_is_told() {
+        for (end, told) in [(6000.0, true), (4000.0, false)] {
+            let h = row(6, 10_000.0);
+            let mut traits = traits_of(&[0.0; 6]);
+            let people = vec![1000u16; 6];
+            let mut tree = Tree::new();
+            let mut log = Vec::new();
+            for (t, x) in [(0.0, 0.0), (1000.0, 0.0), (3000.0, 0.9), (end, 0.9)] {
+                set(&mut traits, 4, x);
+                set(&mut traits, 5, x);
+                tree.frame(
+                    &h,
+                    &mut traits,
+                    &people,
+                    &[0; 6],
+                    &[0; 6],
+                    t,
+                    false,
+                    &mut log,
+                );
+            }
+            assert!(log.is_empty());
+            tree.finish(&mut log);
+            if told {
+                assert!(matches!(
+                    log[..],
+                    [LogEvent::PeopleSplit {
+                        at: 3000.0,
+                        people: 0.0,
+                        new: 1.0,
+                        ..
+                    }]
+                ));
+            } else {
+                assert!(log.is_empty());
+            }
+        }
     }
 
     // A big people that falls under big for good is gone at the first step

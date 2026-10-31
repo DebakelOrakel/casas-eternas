@@ -5,6 +5,8 @@ settlement, the exchange and the chronicle. See [README](./README.md) for the fo
 The incubator's controls and layout are in [ui.md](./ui.md).
 
 ## 2026-10-31
+- **changed** New Stone Age: the fields also spread where only a part of the land is good to farm, as a river's floodplain, and every history ends at a first city, 20 000 years after its start at the latest. `incubator.step.newStoneAge`
+- **changed** Chronicle: a short New Stone Age also tells the splits and merges of the large peoples that held to its end. `incubator.chronicle.event.peopleSplit`
 - **changed** New Stone Age: a much stronger people moves into its neighbours and takes their land, so the peoples keep changing after the spread. `incubator.step.newStoneAge`
 - **new** Chronicle: a people that a stronger people moves into and takes is told as displaced, not as merged. `incubator.chronicle.event.peopleReplaced`
 - **changed** Old Stone Age: without a chosen origin, the people start on the large landmass from which they reach the most land. `incubator.step.oldStoneAge`

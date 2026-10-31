@@ -200,6 +200,10 @@ impl Incubator {
             "distKm" => h.dist_km.clone(),
             "u" => h.u.clone(),
             "v" => h.v.clone(),
+            "arableBest" => h
+                .arable_best
+                .clone()
+                .ok_or_else(|| error("the level holds no arable".into()))?,
             _ => {
                 let id = name
                     .strip_prefix("eco:")
