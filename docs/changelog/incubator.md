@@ -5,6 +5,7 @@ settlement, the exchange and the chronicle. See [README](./README.md) for the fo
 The incubator's controls and layout are in [ui.md](./ui.md).
 
 ## 2026-10-31
+- **fixed** Peoples: no more peoples as thin as strips; a long narrow people goes to the peoples around it. `incubator.people.peoples`
 - **changed** Peoples: the made names are shorter and repeat their sounds less, and related languages keep more of their basic words while their sounds change faster. `language.world.names`
 - **new** Peoples: an overlay colours the land by the peoples' languages, a colour per family, and makes a language chosen in the languages window stand out. `incubator.peopling.languages`
 - **new** Peoples: the languages window compares the words of related languages and follows a place's name through its parts and its forms over time. `language.tab.compare`

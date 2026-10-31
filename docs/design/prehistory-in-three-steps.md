@@ -815,6 +815,20 @@ Building since 2026-10-27:
   changes by it. The H1 pack, the chronicle and the client's step-2 end
   take the history's end, not the city: no city was there before.
 
+- 2026-10-31 (v6 still): no peoples as thin as strips (TEG-132;
+  `casas-incubator` peoples.rs THE STRIPS, `Traits::strips`). The
+  overlay showed peoples some 30 to 75 km across and 400 to 900 km long,
+  a few along a river. Before each tree step, a people whose border with
+  the others is over STRIP_BORDER (3) discs' and whose width is
+  STRIP_WIDTH (8) cells or less goes to the peoples around it, each cell
+  to the nearest. Their causes: the seed's branches the peoples beside
+  ate into, THE WAVES (they doubled them), little THE REPLACEMENT; not
+  the floodplains. With the rain, the own origins, at the end: 12, 18,
+  6 → 0 on Morvane, Thalassor, Zephyra; the big peoples 218, 112, 143 →
+  196, 81, 141; the lived cells changing people in the last 2 500
+  years 50, 43, 40 → 45, 30, 37 %.
+  A band along a river in a desert has no people beside it and stays.
+
 Open:
 
 1. Done 2026-10-31 (TEG-10, Status): step 2 retuned on the v15
@@ -849,7 +863,8 @@ Open:
    their farmland (Morvane's north coastal plain: one people some
    1 000 km by 150 km) and forager peoples with farmers' enclaves or
    left between two farmed regions; the measure (border over three
-   times a disc's) counts the enclaves' borders too.
+   times a disc's) counts the enclaves' borders too. Since 2026-10-31
+   (TEG-132, Status) no strip of 8 cells across or less.
 7. Done 2026-10-31: the origin when none is given is the one of the
    landmasses of 1 M km² or more from which step 1 reaches the most land
    (TEG-7). Before, the land that fed best: Thalassor's (996 766) on a

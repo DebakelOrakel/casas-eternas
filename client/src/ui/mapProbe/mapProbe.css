@@ -9,8 +9,11 @@
   gap: 9px;
   min-width: 190px;
   /* The charts are 240 px; a long value (a climate class's name) wraps
-     rather than widening the card past them. */
+     rather than widening the card past them. The readout card does not wrap
+     its lines (ui/tooltip `tooltip-card--readout`): the probe does, or a
+     long value overflows its column to the left, over its label. */
   max-width: 260px;
+  white-space: normal;
 }
 
 .probe-head {
@@ -78,13 +81,17 @@
 }
 
 .probe-row-label {
+  white-space: nowrap;
   font-size: 11.5px;
   color: var(--dc-muted, #5f6770);
 }
 
 .probe-row-value {
   justify-self: end;
+  min-width: 0;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 5px;
   text-align: right;

@@ -714,6 +714,9 @@ pub struct SimulationResult {
     /// (peoples.rs).
     pub waved: u32,
     pub moved: u32,
+    /// The cells THE STRIPS gave to the peoples around them (peoples.rs
+    /// `Traits::strips`, TEG-132).
+    pub stripped: u32,
     /// WHERE THE GOODS CAME FROM (settle.rs `Goods`): the far trade's
     /// sources and each village's share of each one's goods, at the end.
     /// Packed since 2026-10-30 (v6), after the peoples.
@@ -1314,7 +1317,10 @@ impl Sim<'_, '_> {
 
     // THE TREE's peoples (peoples.rs) at a step of `people`, at `t`; `keep`
     // at a kept state. The chronicle's events into the log.
-    fn tree_frame(&mut self, tree: &mut Tree, people: &[u16], t: f64, keep: bool) {
+    fn tree_frame(&mut self, tree: &mut Tree, people: &[u16], days: &[f32], t: f64, keep: bool) {
+        // THE STRIPS (peoples.rs `Traits::strips`, TEG-132): before the
+        // tree finds the peoples.
+        self.traits.strips(self.h, people, days);
         let fields: Vec<u8> = self
             .farm_at
             .iter()
@@ -1951,12 +1957,12 @@ pub fn simulate(
             if input.keep_traits {
                 trait_frames.push(sim.trait_frame());
             }
-            sim.tree_frame(&mut tree, &kept[kept.len() - 1].people, t, true);
+            sim.tree_frame(&mut tree, &kept[kept.len() - 1].people, &way_days, t, true);
         } else if (t - t0) % CLIMATE_YEARS == 0.0 {
             // THE TREE every CLIMATE_YEARS (peoples.rs, part 4), its ids
             // not kept.
             let people = sim.people_frame();
-            sim.tree_frame(&mut tree, &people, t, false);
+            sim.tree_frame(&mut tree, &people, &way_days, t, false);
         }
         if (t - t0) % POPULATION_STEP == 0.0 {
             let mut sum = 0.0;
@@ -3249,7 +3255,13 @@ pub fn simulate(
         if input.keep_traits {
             trait_frames.push(sim.trait_frame());
         }
-        sim.tree_frame(&mut tree, &kept[kept.len() - 1].people, end, true);
+        sim.tree_frame(
+            &mut tree,
+            &kept[kept.len() - 1].people,
+            &way_days,
+            end,
+            true,
+        );
     }
     tree.finish(&mut sim.log);
     // THE LANGUAGES (languages.rs): their tree from the peoples', their
@@ -3308,6 +3320,7 @@ pub fn simulate(
         splits: sim.traits.splits,
         waved: sim.traits.waved,
         moved: sim.traits.moved,
+        stripped: sim.traits.stripped,
         traits: sim.traits.values,
         trait_frames,
         tree,

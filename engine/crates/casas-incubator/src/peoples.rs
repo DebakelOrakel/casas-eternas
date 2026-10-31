@@ -44,6 +44,9 @@
 //!   (`Tree::tell`). People who move into a lived cell (the famines, the
 //!   rising sea) and are more than its people carry their traits into it
 //!   (`moved_in`).
+//! - THE STRIPS (`strips`, TEG-132, 2026-10-31), before each tree step:
+//!   a people as long and thin as a band (STRIP_BORDER, STRIP_WIDTH)
+//!   goes to the peoples around it.
 //! - THE PEOPLES (`peoples_of`): the lived cells joined by neighbour edges
 //!   whose trait distance is under PEOPLE_DISTANCE, a union-find.
 //! - THE TREE (`Tree`): the peoples every CLIMATE_YEARS, with ids that
@@ -308,6 +311,37 @@ pub const SPLIT_KM2: f64 = 1.0e6;
 pub const WAVE_RATIO: f64 = 10.0;
 pub const WAVE_CHANCE: f64 = 0.5;
 pub const WAVE_KM_A: f64 = 1.0;
+/// THE STRIPS (TEG-132, 2026-10-31; `Traits::strips`): before each tree
+/// step, a people whose border with the other peoples is over
+/// STRIP_BORDER times a disc's of its cells (the measure of THE STRIPES,
+/// see REPLACE_SHARE) and whose width (4 times its cells over its
+/// border's edges: a band of w cells across and L along has w L cells
+/// and some 4 L edges on its two sides) is STRIP_WIDTH cells or less
+/// goes to the peoples around it. The overlay Völker showed bands of
+/// peoples some 30 to 75 km across (3 to 8 cells of 9 km) and 400 to
+/// 900 km long, a few along a river. Measured with the rain on Morvane,
+/// Thalassor and Zephyra (v15, level 1 with the volcanoes' activity, their
+/// own origins), the big peoples at the end: such strips 12, 18, 6 (1.0,
+/// 3.0, 1.0 % of the big peoples' cells), at +5 000 8, 17, 4; none of
+/// one or two cells across. Their cells' last traits on Morvane: 52 %
+/// still the seed's (a branch of step 1 the peoples on both sides ate
+/// into), 42 % THE WAVES (a wave's front along a corridor, or its
+/// reach's end), 6 % THE REPLACEMENT; along a river 9 % (5 % of the
+/// lived cells), on a desert's floodplain (best arable share at
+/// FARM_ARABLE, its mean under) 4 % (4 %). Before THE WAVES (99fa2706)
+/// 6, 7, 4 at the end; before THE FLOODED DESERT (5485a25a) 11, 14, 6:
+/// the waves doubled them, the floodplains did not make them. After:
+/// none, at the end and at +5 000; the bands of any width 26, 33, 15 →
+/// 10, 8, 4; cells given 6 005, 7 982, 3 647; the big peoples 218, 112,
+/// 143 → 196, 81, 141, the largest 2.8 → 3.8 % of Morvane's lived cells;
+/// the lived cells whose people changed in 2 500 years 35/46/50,
+/// 65/60/43, 45/30/40 → 35/45/45, 66/54/30, 45/29/37 % (THE WAVES
+/// draw otherwise once a people is gone: each history goes its own way).
+/// A band along a river in a desert has no people beside it and is kept.
+/// Tried: a width of 6 or 5 cells left 1 to 6 strips a world (the
+/// bands of 6 to 8 cells), a border of 4 discs 3 to 8.
+pub const STRIP_BORDER: f64 = 3.0;
+pub const STRIP_WIDTH: f64 = 8.0;
 /// A people of the tree (`Tree`) has this many people and this many km²
 /// or more; a smaller set of joined alike cells beside one is part of it.
 pub const PEOPLE_LEAST: f64 = 1000.0;
@@ -401,6 +435,8 @@ pub struct Traits {
     pub splits: u32,
     pub waved: u32,
     pub moved: u32,
+    /// The cells THE STRIPS gave to the peoples around them (`strips`).
+    pub stripped: u32,
     // THE REPLACEMENT's pending cells, in the order they became pending;
     // each cell's source, -1 where not pending; its people when the fields
     // came (F0), a km².
@@ -501,6 +537,7 @@ impl Traits {
             splits: 0,
             waved: 0,
             moved: 0,
+            stripped: 0,
             pending: Vec::new(),
             source: vec![-1; n],
             foragers: vec![0.0; n],
@@ -1119,6 +1156,100 @@ impl Traits {
         for &i in cells {
             self.dist[i] = f64::INFINITY;
         }
+    }
+
+    /// THE STRIPS (STRIP_BORDER, TEG-132), before each tree step: the
+    /// peoples as the tree finds them (`peoples_of`, `fold_small`, from
+    /// `people` as a state holds them); a people whose border with the
+    /// other peoples, through the ways (`days` finite), is over
+    /// STRIP_BORDER times a disc's of its cells and whose width (4 times
+    /// its cells over its border's edges) is STRIP_WIDTH cells or less is
+    /// a strip. Each cell of a strip takes the traits and the branch of the
+    /// cell of another people, not a strip, nearest to it by the steps
+    /// through the ways and the strips' cells (a search from all of them at
+    /// once, in the order of the cells; of equals the first): the peoples
+    /// around a strip part it between them. A strip no way joins to another
+    /// people keeps its traits. Its cells keep their people of the last
+    /// tree step (`ident`), so that the tree sees where the strip went;
+    /// a pending cell stays pending.
+    pub fn strips(&mut self, h: &Habitat, people: &[u16], days: &[f32]) {
+        let n = h.count;
+        let weight: Vec<f64> = (0..n)
+            .map(|i| people[i] as f64 * PEOPLE_FRAME_STEP * h.area_km2[i] as f64)
+            .collect();
+        let density: Vec<f32> = people.iter().map(|&p| p as f32).collect();
+        let (label, clusters) = peoples_of(
+            &h.nbr_start,
+            &h.nbr,
+            &self.values,
+            &density,
+            PEOPLE_DISTANCE,
+        );
+        let (fold, count) = fold_small(h, &label, clusters, &weight);
+        let cluster: Vec<i32> = label
+            .iter()
+            .map(|&l| if l < 0 { -1 } else { fold[l as usize] })
+            .collect();
+        let mut cells = vec![0f64; count];
+        let mut border = vec![0f64; count];
+        for i in 0..n {
+            let c = cluster[i];
+            if c < 0 {
+                continue;
+            }
+            cells[c as usize] += 1.0;
+            for e in h.edges(i) {
+                let u = h.nbr[e] as usize;
+                if cluster[u] >= 0 && cluster[u] != c && days[e] < f32::INFINITY {
+                    border[c as usize] += 1.0;
+                }
+            }
+        }
+        let strip: Vec<bool> = (0..count)
+            .map(|c| {
+                border[c] > STRIP_BORDER * 2.0 * (PI * cells[c]).sqrt()
+                    && 4.0 * cells[c] <= STRIP_WIDTH * border[c]
+            })
+            .collect();
+        if !strip.iter().any(|&s| s) {
+            return;
+        }
+        // The search: each strip cell's kin, a cell of a people not a strip.
+        let in_strip = |i: usize| cluster[i] >= 0 && strip[cluster[i] as usize];
+        let mut kin = vec![u32::MAX; n];
+        let mut queue: Vec<usize> = Vec::new();
+        for i in 0..n {
+            if !in_strip(i) {
+                continue;
+            }
+            for e in h.edges(i) {
+                let u = h.nbr[e] as usize;
+                if cluster[u] >= 0 && !in_strip(u) && days[e] < f32::INFINITY {
+                    kin[i] = u as u32;
+                    queue.push(i);
+                    break;
+                }
+            }
+        }
+        let mut k = 0;
+        while k < queue.len() {
+            let i = queue[k];
+            k += 1;
+            for e in h.edges(i) {
+                let u = h.nbr[e] as usize;
+                if in_strip(u) && kin[u] == u32::MAX && days[e] < f32::INFINITY {
+                    kin[u] = kin[i];
+                    queue.push(u);
+                }
+            }
+        }
+        for &i in &queue {
+            let from = kin[i] as usize;
+            self.values
+                .copy_within(from * TRAITS..(from + 1) * TRAITS, i * TRAITS);
+            self.branch[i] = self.branch[from];
+        }
+        self.stripped += queue.len() as u32;
     }
 }
 
@@ -2200,6 +2331,69 @@ mod tests {
         }
     }
 
+    // A grid of `w` × `h` cells of `km2` each, joined to the four beside.
+    fn grid(w: usize, h: usize, km2: f32) -> Habitat {
+        let mut out = row(w * h, km2);
+        let mut nbr_start = vec![0u32];
+        let mut nbr = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                if x > 0 {
+                    nbr.push((y * w + x - 1) as u32);
+                }
+                if x + 1 < w {
+                    nbr.push((y * w + x + 1) as u32);
+                }
+                if y > 0 {
+                    nbr.push(((y - 1) * w + x) as u32);
+                }
+                if y + 1 < h {
+                    nbr.push(((y + 1) * w + x) as u32);
+                }
+                nbr_start.push(nbr.len() as u32);
+            }
+        }
+        out.dist_km = vec![10.0; nbr.len()];
+        out.nbr_start = nbr_start;
+        out.nbr = nbr;
+        out
+    }
+
+    // Two peoples of 20 columns, 60 rows, and between them a third of
+    // `across` columns (traits 0.2, 0.5, 0.8): one column across is a
+    // strip and goes to its neighbours, each cell to the nearer (of
+    // equals the first found, the left); twelve columns are a people.
+    fn strip_grid(across: usize) -> (Traits, usize) {
+        let w = 40 + across;
+        let h = grid(w, 60, 200.0);
+        let of: Vec<f32> = (0..w * 60)
+            .map(|i| match i % w {
+                x if x < 20 => 0.2,
+                x if x < 20 + across => 0.5,
+                _ => 0.8,
+            })
+            .collect();
+        let mut traits = traits_of(&of);
+        let people = vec![1000u16; w * 60];
+        let days = vec![1.0f32; h.nbr.len()];
+        traits.strips(&h, &people, &days);
+        (traits, w)
+    }
+
+    #[test]
+    fn a_strip_goes_to_the_peoples_around_it() {
+        let (traits, w) = strip_grid(1);
+        assert_eq!(traits.stripped, 60);
+        for y in 0..60 {
+            assert_eq!(traits.values[(y * w + 20) * TRAITS], 0.2);
+            assert_eq!(traits.values[(y * w + 19) * TRAITS], 0.2);
+            assert_eq!(traits.values[(y * w + 21) * TRAITS], 0.8);
+        }
+        let (traits, w) = strip_grid(12);
+        assert_eq!(traits.stripped, 0);
+        assert_eq!(traits.values[(30 * w + 25) * TRAITS], 0.5);
+    }
+
     // The traits of `n` cells, each the vector of all `of[i]`, one branch.
     fn traits_of(of: &[f32]) -> Traits {
         let n = of.len();
@@ -2218,6 +2412,7 @@ mod tests {
             splits: 0,
             waved: 0,
             moved: 0,
+            stripped: 0,
             pending: Vec::new(),
             source: vec![-1; n],
             foragers: vec![0.0; n],

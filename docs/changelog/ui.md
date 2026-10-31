@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-10-31
+- **fixed** Overlays: a long value in the hover card wraps instead of running over its label. `incubator.people.peoples.label`
 - **changed** Save/Load: the world's details name its generator, no longer its pipeline. `common.world.pipeline`
 
 ## 2026-10-29

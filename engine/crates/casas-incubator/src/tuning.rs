@@ -102,7 +102,12 @@ use serde_json::{Map, Value, json};
 /// sounds follow the sound changes, a name's own word and a new word go
 /// through the line's changes, no letter three times in a row; the
 /// languages', the names' and the other names' arrays other, the other
-/// arrays and the log the same bytes.
+/// arrays and the log the same bytes; no peoples as thin as strips: a
+/// people whose border is over STRIP_BORDER discs' and whose width is
+/// STRIP_WIDTH cells or less goes to the peoples around it before each
+/// tree step (peoples.rs `Traits::strips`, TEG-132, 2026-10-31), the
+/// peoples' arrays and events, the languages and the names other, the
+/// other arrays and events the same bytes.
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
@@ -188,6 +193,7 @@ pub fn constants() -> Value {
         "peoples": object(table!(peoples:
             TRAITS, BRANCH_SHARE, BRANCH_ROUNDS, BRANCH_STEP, TRAIT_DRIFT, LANGUAGE_DRIFT, TRAIT_CONTACT, LANGUAGE_CONTACT,
             CONTACT_DAYS, TRAIT_LIKE, PEOPLE_DISTANCE, REPLACE_SHARE, FIELDS_AROUND, FIELDS_AROUND_KM, SPLIT_KM2, WAVE_RATIO, WAVE_CHANCE, WAVE_KM_A,
+            STRIP_BORDER, STRIP_WIDTH,
             PEOPLE_LEAST, PEOPLE_LEAST_KM2, SPLIT_TOLD_SHARE, FARMERS_TOLD_SHARE, TOLD_LIVES_YEARS, EARLY_SPLIT_YEARS, TOLD_SPAN_SHARE, FARMERS_TOLD,
         )),
         "language": object(table!(language:
