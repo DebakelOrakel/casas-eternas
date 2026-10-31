@@ -35,8 +35,14 @@
 //!   foragers keep theirs (in Europe the farmers who came replaced most
 //!   of the hunters, as the genes show). The herds, the
 //!   copper, and the fields that come to a cell that has them carry no
-//!   traits; nor do people who move into a lived cell (the famines, the
-//!   rising sea): they meet by contact.
+//!   traits.
+//! - THE WAVES (`waves`, TEG-14, 2026-10-31), every CLIMATE_YEARS after
+//!   the split: a people much stronger than a neighbour people (more
+//!   people a km², or an innovation the other lacks) moves into it, and
+//!   its traits take over the cells it reaches; a people taken whole
+//!   goes into the newcomers' people (`Tree`). People who move into a
+//!   lived cell (the famines, the rising sea) and are more than its
+//!   people carry their traits into it (`moved_in`).
 //! - THE PEOPLES (`peoples_of`): the lived cells joined by neighbour edges
 //!   whose trait distance is under PEOPLE_DISTANCE, a union-find.
 //! - THE TREE (`Tree`): the peoples every CLIMATE_YEARS, with ids that
@@ -69,7 +75,7 @@
 use crate::habitat::{Habitat, km_between};
 use crate::log::LogEvent;
 use crate::peopling::{Peopling, branches_of};
-use crate::simulation::PEOPLE_FRAME_STEP;
+use crate::simulation::{CLIMATE_YEARS, PEOPLE_FRAME_STEP};
 use casas_generator::core::det_math::{det_cos, det_exp, det_log};
 use casas_generator::core::js;
 use casas_generator::core::min_heap::MinHeap;
@@ -229,6 +235,75 @@ pub const FIELDS_AROUND_KM: f64 = 40.0;
 /// Thalassor and Zephyra (3.1, 4.0 %). The earth's largest cultures of
 /// the new stone age (the LBK, the Corded Ware) some 0.5 to 1.5 M km².
 pub const SPLIT_KM2: f64 = 1.0e6;
+/// THE WAVES (TEG-14, 2026-10-31; `Traits::waves`). Before them, step 2
+/// changed the peoples only by THE SPLIT, THE REPLACEMENT at the fields'
+/// front, and the contact. The splits and the replacement end when the
+/// spread ends (some 5 000 to 7 500 years from step 2's start on the
+/// three v15 worlds), and the contact cannot join two branches (each
+/// drifts as one, the contact acts only at the border cells, and the
+/// homophily keeps peoples that differ apart). So the peoples froze:
+/// on Zephyra, from +10 000 to +19 500, 2 to 9 % of the lived cells
+/// changed their people in 2 500 years. On the earth
+/// the peoples changed all the time: the Yamnaya's descendants gave
+/// some 75 % of the Corded Ware's ancestry within a few centuries (Haak
+/// et al. 2015), the Beaker people some 90 % of Britain's (Olalde et al.
+/// 2018), the Bantu took most of Africa south of the equator in some
+/// 3 500 years (Grollemund et al. 2015), the Austronesians spread in
+/// pulses and pauses (Gray et al. 2009), the new stone age's peoples
+/// boomed and busted (Shennan et al. 2013), and most archaeological
+/// cultures lasted some centuries.
+///
+/// A people's strength is its people a km² times WAVE_RATIO for each
+/// innovation (the herds, the copper, the smelting) it has on half its
+/// km² or more. A people presses a neighbour people (another people by
+/// the traits, PEOPLE_DISTANCE) when its strength is WAVE_RATIO times
+/// the neighbour's or more: ten times the people a km², or an
+/// innovation more and as many people, or two innovations more and a
+/// tenth of the people (the herders with the copper against the
+/// farmers, as the Yamnaya). WAVE_RATIO is 1 / REPLACE_SHARE: the
+/// newcomers are nine of ten, as THE REPLACEMENT's farmers and the
+/// Beaker people in Britain. A pressed people is moved into with
+/// WAVE_CHANCE a step (the pulses and pauses), as far as WAVE_KM_A a
+/// year from the border (the Bantu, and the fields' FARM_KM_A); each
+/// cell reached takes the traits of the pressing people's heart (as
+/// `kin_of`: compact, no rays) and a new branch a step of BRANCH_STEP
+/// from them: a daughter people of the newcomers (the Corded Ware of the
+/// Yamnaya), which drifts on its own.
+///
+/// Measured with the rain on Morvane, Thalassor and Zephyra (v15, their
+/// own origins), before → after. Step 2's times the same (the traits
+/// feed back into nothing). The lived cells whose people (the tree's
+/// id) changed in 2 500 years, after the spread: Morvane 11 → 47 %
+/// (+7 500), Zephyra 9, 6, 6, 3, 2 → 29, 23, 34, 35, 41 % (+10 000 to
+/// +19 500): a region a new people every some 7 000 years. The big
+/// peoples' splits, merges and ends in the tree a 2 500 years on
+/// Zephyra from +10 000: 15/19/0, 15/17/0, 17/12/0, 11/11/0, 9/8/0 →
+/// 56/54/0, 55/58/0, 65/59/0, 63/68/0, 85/89/0 (a people taken whole
+/// goes into the newcomers' people). Told (splits, merges, gone, turns
+/// to farming): 0/0/0/34 → 0/0/0/24, 0/0/0/27 → 0/0/0/22, 11/4/1/28 →
+/// 31/13/2/35 (Morvane's and Thalassor's step 2 is 8 000 years long: a
+/// split or a merge held TOLD_LIVES_YEARS after EARLY_SPLIT_YEARS is
+/// too late). The big peoples at the end 170, 180, 156 → 180, 176, 141;
+/// the largest at most 6.8, 5.4, 6.3 → 5.4, 6.7, 7.0 % of the land
+/// lived in. The stripes (border over 3 discs, see REPLACE_SHARE) at
+/// the end 14, 8, 12 → 20, 13, 15, the median of all 2.28, 2.23, 2.31 →
+/// 2.23, 2.24, 2.37, p90 2.85, 2.68, 2.91 → 3.15, 2.89, 3.03. The cells
+/// taken 523 086, 174 765, 723 270 (a cell again and again); the
+/// history 8.1 → 8.6 s, 5.6 → 5.7, 10.3 → 10.2.
+/// Tried: a cell taken only where the presser is WAVE_RATIO times its
+/// own strength: enclaves of the dense cells, stripes 25 to 59. The
+/// cells taken into the presser's branch, no daughter: the peoples
+/// merge and do not split (Zephyra's big peoples 156 → 71, the largest
+/// up to 12 %). At 0.5 km a year: bands, Morvane's stripes 30 to 35; at
+/// 4 km a year the daughters near their parent join it (Zephyra 110 big
+/// peoples). THE FISSION (a branch of 250 000 km² that did not split
+/// for 2 500 years splits with 0.2 a step) alone gave the splits back
+/// but not the change (1 to 4 % of the cells a 2 500 years on Zephyra
+/// late); with the waves it is not needed (the daughters are the later
+/// splits) and gave Morvane 23 to 28 stripes: not built.
+pub const WAVE_RATIO: f64 = 10.0;
+pub const WAVE_CHANCE: f64 = 0.5;
+pub const WAVE_KM_A: f64 = 1.0;
 /// A people of the tree (`Tree`) has this many people and this many km²
 /// or more; a smaller set of joined alike cells beside one is part of it.
 pub const PEOPLE_LEAST: f64 = 1000.0;
@@ -292,11 +367,17 @@ pub struct Traits {
     /// Each cell's people of the tree (`Tree`) at the last tree step, or
     /// its settlers' people; -1 before the first.
     pub ident: Vec<i32>,
+    // The people a cell was of where THE WAVES took it since the last
+    // tree step, -1 where none: where the people taken went (`Tree`).
+    taken_from: Vec<i32>,
     // THE SPLIT's days from a cell, Infinity where not searched.
     dist: Vec<f64>,
-    /// The cells whose traits the fields replaced; the splits.
+    /// The cells whose traits the fields replaced; the splits; the cells
+    /// THE WAVES took; the lived cells movers took (`moved_in`).
     pub replaced: u32,
     pub splits: u32,
+    pub waved: u32,
+    pub moved: u32,
     // THE REPLACEMENT's pending cells, in the order they became pending;
     // each cell's source, -1 where not pending; its people when the fields
     // came (F0), a km².
@@ -391,9 +472,12 @@ impl Traits {
             stamp: vec![0; n],
             pass: 0,
             ident: vec![-1; n],
+            taken_from: vec![-1; n],
             dist: vec![f64::INFINITY; n],
             replaced: 0,
             splits: 0,
+            waved: 0,
+            moved: 0,
             pending: Vec::new(),
             source: vec![-1; n],
             foragers: vec![0.0; n],
@@ -414,6 +498,17 @@ impl Traits {
         self.branch[cell] = self.branch[kin];
         self.ident[cell] = self.ident[kin];
         self.source[cell] = -1;
+    }
+
+    /// `came` people a km² of `kin` (a famine's, the rising sea's) moved
+    /// into lived `cell`, which had `had` a km²: where they are more than
+    /// its people, the cell takes their traits and branch (TEG-14: after
+    /// a bust the land is settled again from around, Shennan et al. 2013).
+    pub fn moved_in(&mut self, cell: usize, kin: usize, came: f64, had: f64) {
+        if came > had && self.branch[kin] >= 0 && cell != kin {
+            self.inherit(cell, kin);
+            self.moved += 1;
+        }
     }
 
     /// THE REPLACEMENT, its first half: the fields that began at `centre`
@@ -579,10 +674,19 @@ impl Traits {
         s
     }
 
-    /// Every CLIMATE_YEARS: the split, the drift, then the contact, on the
-    /// lived cells.
-    pub fn climate_step(&mut self, h: &Habitat, lived: &[usize], people: &[f32], days: &[f32]) {
+    /// Every CLIMATE_YEARS: the split, the waves, the drift, then the
+    /// contact, on the lived cells. `known` each cell's innovations
+    /// (`waves`).
+    pub fn climate_step(
+        &mut self,
+        h: &Habitat,
+        lived: &[usize],
+        people: &[f32],
+        days: &[f32],
+        known: &[u8],
+    ) {
         self.split(h, lived, people, days);
+        self.waves(h, lived, people, days, known);
         // THE DRIFT: a step for each trait of each branch, drawn for every
         // branch in order (lived or not, so that the stream does not hang
         // on who lives where).
@@ -759,6 +863,198 @@ impl Traits {
             self.branches += 1;
             self.splits += 1;
         }
+    }
+
+    // THE WAVES (WAVE_RATIO), after the split. The peoples are the tree's
+    // at its last step (`ident`, `heart`); `known` each cell's
+    // innovations, a bit each (the herds, the copper, the smelting).
+    // 1. Each people's strength: its people a km², times WAVE_RATIO for
+    //    each innovation on half its km² or more.
+    // 2. Each people's strongest presser: a neighbour people (a lived
+    //    neighbour cell by a way, of another id, at PEOPLE_DISTANCE or
+    //    more by the traits) of PEOPLE_LEAST people and PEOPLE_LEAST_KM2
+    //    or more, of WAVE_RATIO times its strength or more. A people that
+    //    presses another is not moved into at the same step.
+    // 3. In the order of the ids, a pressed people is moved into with
+    //    WAVE_CHANCE.
+    // 4. A search by the km from its cells at the border with its presser,
+    //    through its own lived cells joined by ways, to WAVE_KM_A ×
+    //    CLIMATE_YEARS: each cell reached takes the traits and id of the
+    //    presser's heart where the heart is lived on its landmass, else of
+    //    the presser's border cell the search came from; and a new branch,
+    //    one for each people moved into, a step of BRANCH_STEP from them
+    //    (the newcomers' daughter people).
+    fn waves(&mut self, h: &Habitat, lived: &[usize], people: &[f32], days: &[f32], known: &[u8]) {
+        let ids = self.heart.len();
+        if ids == 0 {
+            return;
+        }
+        // 1. The measures by id.
+        let mut km2 = vec![0f64; ids];
+        let mut sum = vec![0f64; ids];
+        let mut held = vec![[0f64; 3]; ids];
+        self.pass += 1;
+        for &i in lived {
+            let p = self.ident[i];
+            if people[i] <= 0.0 || p < 0 || self.stamp[i] == self.pass {
+                continue;
+            }
+            self.stamp[i] = self.pass;
+            let (p, a) = (p as usize, h.area_km2[i] as f64);
+            km2[p] += a;
+            sum[p] += people[i] as f64 * a;
+            for (k, x) in held[p].iter_mut().enumerate() {
+                if known[i] & (1 << k) != 0 {
+                    *x += a;
+                }
+            }
+        }
+        let strength: Vec<f64> = (0..ids)
+            .map(|p| {
+                if km2[p] <= 0.0 {
+                    return 0.0;
+                }
+                held[p]
+                    .iter()
+                    .filter(|&&x| x >= 0.5 * km2[p])
+                    .fold(sum[p] / km2[p], |s, _| s * WAVE_RATIO)
+            })
+            .collect();
+        // 2. The strongest presser of each people; of equals the lower id.
+        let mut presser = vec![-1i32; ids];
+        for &i in lived {
+            let b = self.ident[i];
+            if people[i] <= 0.0 || b < 0 {
+                continue;
+            }
+            let b = b as usize;
+            for e in h.edges(i) {
+                let u = h.nbr[e] as usize;
+                let a = self.ident[u];
+                if a < 0 || a as usize == b || people[u] <= 0.0 || days[e] == f32::INFINITY {
+                    continue;
+                }
+                let au = a as usize;
+                if sum[au] < PEOPLE_LEAST
+                    || km2[au] < PEOPLE_LEAST_KM2
+                    || strength[au] < WAVE_RATIO * strength[b]
+                    || trait_distance(&self.values, i, u) < PEOPLE_DISTANCE
+                {
+                    continue;
+                }
+                let q = presser[b];
+                if q < 0
+                    || strength[au] > strength[q as usize]
+                    || (strength[au] == strength[q as usize] && a < q)
+                {
+                    presser[b] = a;
+                }
+            }
+        }
+        let mut presses = vec![false; ids];
+        for &a in &presser {
+            if a >= 0 {
+                presses[a as usize] = true;
+            }
+        }
+        // 3. The draws, in the order of the ids.
+        let mut moving = vec![false; ids];
+        for b in 0..ids {
+            if presser[b] >= 0 && !presses[b] {
+                moving[b] = self.random.next() < WAVE_CHANCE;
+            }
+        }
+        if !moving.iter().any(|&m| m) {
+            return;
+        }
+        // 4. The search from all moved-into peoples' borders at once. A
+        //    cell's people when the step began (`was`) and the cell of the
+        //    presser its search came from (`from`).
+        let was = self.ident.clone();
+        let mut daughter = vec![-1i32; ids];
+        let mut step = vec![0f64; ids * TRAITS];
+        let reach = WAVE_KM_A * CLIMATE_YEARS;
+        let mut heap = MinHeap::new(256);
+        let mut from: Vec<(usize, usize)> = Vec::new();
+        let mut seen = Vec::new();
+        for &i in lived {
+            let b = was[i];
+            if people[i] <= 0.0 || b < 0 || !moving[b as usize] {
+                continue;
+            }
+            for e in h.edges(i) {
+                let u = h.nbr[e] as usize;
+                let d = h.dist_km[e] as f64;
+                if was[u] == presser[b as usize]
+                    && people[u] > 0.0
+                    && days[e] < f32::INFINITY
+                    && d < self.dist[i]
+                {
+                    if self.dist[i] == f64::INFINITY {
+                        seen.push(i);
+                    }
+                    self.dist[i] = d;
+                    heap.push(d, from.len() as i32);
+                    from.push((i, u));
+                }
+            }
+        }
+        while !heap.is_empty() {
+            heap.pop();
+            let d = heap.popped_key;
+            let (i, u) = from[heap.popped_index as usize];
+            if d > self.dist[i] {
+                continue;
+            }
+            let b = was[i];
+            let a = presser[b as usize];
+            let c = self.heart[a as usize];
+            let kin = if c >= 0
+                && people[c as usize] > 0.0
+                && was[c as usize] == a
+                && h.landmass[c as usize] == h.landmass[i]
+            {
+                c as usize
+            } else {
+                u
+            };
+            // The kin's traits, a new branch's step from them.
+            self.inherit(i, kin);
+            self.taken_from[i] = b;
+            let q = b as usize;
+            if daughter[q] < 0 {
+                daughter[q] = self.branches as i32;
+                self.branches += 1;
+                for t in 0..TRAITS {
+                    step[q * TRAITS + t] = BRANCH_STEP * normal(&mut self.random);
+                }
+            }
+            self.branch[i] = daughter[q];
+            for t in 0..TRAITS {
+                let x = &mut self.values[i * TRAITS + t];
+                *x = reflect(*x as f64 + step[q * TRAITS + t]) as f32;
+            }
+            self.waved += 1;
+            for e in h.edges(i) {
+                let v = h.nbr[e] as usize;
+                let nd = d + h.dist_km[e] as f64;
+                if was[v] != b
+                    || people[v] <= 0.0
+                    || days[e] == f32::INFINITY
+                    || nd > reach
+                    || nd >= self.dist[v]
+                {
+                    continue;
+                }
+                if self.dist[v] == f64::INFINITY {
+                    seen.push(v);
+                }
+                self.dist[v] = nd;
+                heap.push(nd, from.len() as i32);
+                from.push((v, u));
+            }
+        }
+        self.clear(&seen);
     }
 
     // The cells of branch `b` joined to `from` by ways through lived cells
@@ -1144,9 +1440,26 @@ impl Tree {
                 _ => overlap.push((p, q, w)),
             }
         }
+        // The cells THE WAVES took (`Traits::waves`): where each people
+        // taken went, by its cells' clusters now (`match_overlap`).
+        let mut taken: Vec<(u32, u32, f64)> = Vec::new();
+        for i in 0..n {
+            let p = traits.taken_from[i];
+            if p >= 0 && cluster[i] >= 0 {
+                taken.push((p as u32, cluster[i] as u32, weight[i]));
+            }
+            traits.taken_from[i] = -1;
+        }
         let before = self.alive.clone();
         let old = self.peoples.len();
-        let ids = match_overlap(&mut self.peoples, &mut self.alive, &overlap, count, t);
+        let ids = match_overlap(
+            &mut self.peoples,
+            &mut self.alive,
+            &overlap,
+            &taken,
+            count,
+            t,
+        );
         // A new people's descent: its parent's, or at step 2's start the
         // group of most of its people.
         let mut by_group: Vec<(u32, i32, f64)> = (0..n)
@@ -1570,11 +1883,15 @@ fn fold_small(h: &Habitat, label: &[i32], count: usize, weight: &[f64]) -> (Vec<
 // The ids of the clusters now (`count` of them, by the clusters of
 // `overlap`'s second), the peoples matched, made and ended in `peoples`
 // and `alive` (see `Tree`). A cluster with no overlap, at step 2's start,
-// is a new people of no parent.
+// is a new people of no parent. `taken` the overlap of the cells THE
+// WAVES took, by the people they were of: a people ended with no overlap
+// went where most of its cells taken went (into the newcomers' people),
+// not died out.
 fn match_overlap(
     peoples: &mut Vec<People>,
     alive: &mut Vec<u32>,
     overlap: &[(u32, u32, f64)],
+    taken: &[(u32, u32, f64)],
     count: usize,
     t: f64,
 ) -> Vec<i32> {
@@ -1605,6 +1922,17 @@ fn match_overlap(
         }
         if w > went[p as usize].1 || went[p as usize].0 < 0 {
             went[p as usize] = (q as i32, w);
+        }
+    }
+    let mut went_taken = vec![(-1i32, 0f64); peoples.len()];
+    for &(p, q, w) in taken {
+        if w > went_taken[p as usize].1 || went_taken[p as usize].0 < 0 {
+            went_taken[p as usize] = (q as i32, w);
+        }
+    }
+    for p in 0..peoples.len() {
+        if went[p].0 < 0 {
+            went[p] = went_taken[p];
         }
     }
     for q in 0..count {
@@ -1770,9 +2098,12 @@ mod tests {
             stamp: vec![0; n],
             pass: 0,
             ident: vec![-1; n],
+            taken_from: vec![-1; n],
             dist: vec![f64::INFINITY; n],
             replaced: 0,
             splits: 0,
+            waved: 0,
+            moved: 0,
             pending: Vec::new(),
             source: vec![-1; n],
             foragers: vec![0.0; n],
@@ -2115,5 +2446,81 @@ mod tests {
         assert_eq!(reflect(-0.25), 0.25);
         assert_eq!(reflect(1.25), 0.75);
         assert_eq!(reflect(0.5), 0.5);
+    }
+
+    // THE WAVES on a row of 80 cells 10 km apart: people 0 (cells 0 to 9,
+    // its heart cell 3) beside people 1 (cells 10 to 79). `a` and `b`
+    // their people a km², `known` people 0's innovations. The steps until
+    // a wave came (at most 20), or None.
+    fn wave_row(a: f32, b: f32, known: u8) -> (Traits, Option<usize>) {
+        let h = row(80, 10_000.0);
+        let mut of = vec![0.2f32; 10];
+        of.extend([0.8f32; 70]);
+        let mut traits = traits_of(&of);
+        let people: Vec<f32> = (0..80).map(|i| if i < 10 { a } else { b }).collect();
+        let known: Vec<u8> = (0..80).map(|i| if i < 10 { known } else { 0 }).collect();
+        for i in 0..80 {
+            traits.ident[i] = (i >= 10) as i32;
+        }
+        traits.heart = vec![3, 40];
+        let lived: Vec<usize> = (0..80).collect();
+        let days = vec![1.0f32; h.nbr.len()];
+        for k in 0..20 {
+            traits.waves(&h, &lived, &people, &days, &known);
+            if traits.waved > 0 {
+                return (traits, Some(k));
+            }
+        }
+        (traits, None)
+    }
+
+    // Ten times the people a km²: the newcomers take the cells within
+    // WAVE_KM_A × CLIMATE_YEARS (500 km, cells 10 to 59), a new branch a
+    // step from the heart's traits; beyond, and the pressing people, keep
+    // theirs.
+    #[test]
+    fn a_people_ten_times_as_dense_moves_in() {
+        let (traits, at) = wave_row(10.0, 1.0, 0);
+        assert!(at.is_some());
+        assert_eq!(traits.waved, 50);
+        for i in 10..60 {
+            assert_eq!((traits.branch[i], traits.ident[i]), (1, 0));
+            assert_eq!(
+                traits.values[i * TRAITS..(i + 1) * TRAITS],
+                traits.values[10 * TRAITS..11 * TRAITS]
+            );
+        }
+        let d = trait_distance(&traits.values, 3, 10);
+        assert!(d > 0.0 && d < 0.15, "a step from the heart: {d}");
+        for i in (0..10).chain(60..80) {
+            let x = if i < 10 { 0.2 } else { 0.8 };
+            assert_eq!(traits.branch[i], 0);
+            assert!(
+                traits.values[i * TRAITS..(i + 1) * TRAITS]
+                    .iter()
+                    .all(|&v| v == x)
+            );
+        }
+    }
+
+    // Five times the people a km² does not press; an innovation more and
+    // as many people does.
+    #[test]
+    fn waves_need_ten_times_the_strength() {
+        assert_eq!(wave_row(5.0, 1.0, 0).1, None);
+        assert!(wave_row(1.0, 1.0, 0b010).1.is_some());
+        assert_eq!(wave_row(1.0, 1.0, 0).1, None);
+    }
+
+    // Movers more than a lived cell's people carry their traits into it;
+    // fewer do not.
+    #[test]
+    fn movers_carry_their_traits_where_they_are_more() {
+        let mut traits = traits_of(&[0.2, 0.8, 0.8]);
+        traits.moved_in(1, 0, 2.0, 1.0);
+        traits.moved_in(2, 0, 1.0, 2.0);
+        assert_eq!(traits.values[TRAITS], 0.2);
+        assert_eq!(traits.values[2 * TRAITS], 0.8);
+        assert_eq!(traits.moved, 1);
     }
 }

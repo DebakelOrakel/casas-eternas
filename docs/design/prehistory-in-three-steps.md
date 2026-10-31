@@ -216,7 +216,9 @@ constants in simulation.rs.
   Built 2026-10-29 (`casas-incubator` peoples.rs): the traits, the
   farmers' replacement, the split of large peoples, the peoples' lasting
   ids and their tree; their storage in H1 and the overlay (Völker); the
-  chronicle's events (2026-10-29, Status).
+  chronicle's events (2026-10-29, Status). Since 2026-10-31 (TEG-14) a
+  much stronger people moves into its neighbour and takes its land
+  (Status).
 - **The peoples in the chronicle (2026-10-29).** Of the big peoples
   alone, and of a people of a share of the land lived in (0.5 %): a
   people splits (both parts so large), merges into another, vanishes
@@ -700,6 +702,25 @@ Building since 2026-10-27:
   Morvane none (at most 19 000 km² a step), on Thalassor five floods
   from +1 000 to +3 000 (104 000 to 165 000 km²) and a rise at +4 000
   (100 000), on Zephyra a flood at +4 500 (110 000).
+- 2026-10-31 (v6 still): the peoples' waves (TEG-14; `casas-incubator`
+  peoples.rs THE WAVES). Before, the peoples changed only while the
+  people and the fields spread (some 5 000 to 7 500 years), then froze.
+  Now a people of ten times a neighbour's strength (its people a km²,
+  times ten for each of the herds, the copper and the smelting on half
+  its land) moves into it with a chance of 0.5 every 500 years, up to
+  500 km from the border; the cells taken become a daughter people of
+  the newcomers, and the people taken goes into it. People who flee a
+  famine or the sea into a lived cell, and are more than its people,
+  carry their traits. Earth anchors: the Corded Ware, Beaker Britain,
+  the Bantu, the Austronesians. With the rain, the three worlds' own
+  origins: the lived cells whose people changed in 2 500 years after the
+  spread 2 to 11 % → 23 to 47 % (a region a new people every some
+  7 000 years); the big peoples at the end 170, 180, 156 → 180, 176,
+  141, the largest at most 7.0 %; the stripes (border over three times a
+  disc's) at the end 14, 8, 12 → 20, 13, 15 (most at 3.0 to 3.6). Told
+  on Zephyra 11 splits, 4 merges → 31, 13. Step 2's times the same (the
+  traits feed back into nothing). A fission of large old branches (C)
+  was tried and not built: the daughters give the later splits.
 
 Open:
 

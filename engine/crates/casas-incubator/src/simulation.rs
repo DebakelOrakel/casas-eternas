@@ -621,6 +621,10 @@ pub struct SimulationResult {
     /// (peoples.rs).
     pub replaced: u32,
     pub splits: u32,
+    /// The cells THE WAVES took, and the lived cells movers took
+    /// (peoples.rs).
+    pub waved: u32,
+    pub moved: u32,
     /// WHERE THE GOODS CAME FROM (settle.rs `Goods`): the far trade's
     /// sources and each village's share of each one's goods, at the end.
     /// Packed since 2026-10-30 (v6), after the peoples.
@@ -1076,6 +1080,7 @@ impl Sim<'_, '_> {
             if self.people[u] == 0.0 {
                 self.settle(u, t, density, i as i32, i);
             } else {
+                self.traits.moved_in(u, i, density, self.people[u] as f64);
                 self.people[u] = (self.people[u] as f64 + density) as f32;
                 self.grows(u);
             }
@@ -2089,9 +2094,17 @@ pub fn simulate(
             }
             let still = sim.lived.clone();
             sim.front = still;
-            // THE PEOPLES: the traits' drift and contact (peoples.rs).
+            // THE PEOPLES: the traits' waves, drift and contact
+            // (peoples.rs); each cell's innovations for the waves.
+            let known: Vec<u8> = (0..h.count)
+                .map(|i| {
+                    (sim.herd_at[i] as f64 <= t) as u8
+                        | ((sim.copper_at[i] as f64 <= t) as u8) << 1
+                        | ((sim.smelt_at[i] as f64 <= t) as u8) << 2
+                })
+                .collect();
             sim.traits
-                .climate_step(h, &sim.lived, &sim.people, &way_days);
+                .climate_step(h, &sim.lived, &sim.people, &way_days, &known);
             // The big game's extinctions: a species under EXTINCT_BELOW of
             // its own on a landmass.
             for sp in sim.species.iter_mut() {
@@ -2799,6 +2812,8 @@ pub fn simulate(
                             // `most` is a cell: the people fled have some.
                             sim.settle(u, t, density, most, most as usize);
                         } else {
+                            sim.traits
+                                .moved_in(u, most as usize, density, sim.people[u] as f64);
                             sim.people[u] = (sim.people[u] as f64 + density) as f32;
                             sim.grows(u);
                         }
@@ -3161,6 +3176,8 @@ pub fn simulate(
         end,
         replaced: sim.traits.replaced,
         splits: sim.traits.splits,
+        waved: sim.traits.waved,
+        moved: sim.traits.moved,
         traits: sim.traits.values,
         trait_frames,
         tree,

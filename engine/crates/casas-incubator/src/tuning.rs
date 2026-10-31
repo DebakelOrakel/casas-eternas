@@ -56,7 +56,9 @@ use serde_json::{Map, Value, json};
 /// 2 (climate_history.rs THE REBOUND, TEG-22, 2026-10-31); the log tells
 /// where the sea floods the land the ice left and where it rises again
 /// (simulation.rs THE REBOUND'S COASTS, `SeaFloodsIce` and `LandRises`,
-/// TEG-22, 2026-10-31).
+/// TEG-22, 2026-10-31); the peoples' waves, and movers who
+/// carry their traits into a lived cell (peoples.rs THE WAVES, TEG-14,
+/// 2026-10-31), the other arrays and events the same bytes.
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
@@ -120,7 +122,7 @@ pub fn constants() -> Value {
         )),
         "peoples": object(table!(peoples:
             TRAITS, BRANCH_SHARE, BRANCH_ROUNDS, BRANCH_STEP, TRAIT_DRIFT, LANGUAGE_DRIFT, TRAIT_CONTACT, LANGUAGE_CONTACT,
-            CONTACT_DAYS, TRAIT_LIKE, PEOPLE_DISTANCE, REPLACE_SHARE, FIELDS_AROUND, FIELDS_AROUND_KM, SPLIT_KM2,
+            CONTACT_DAYS, TRAIT_LIKE, PEOPLE_DISTANCE, REPLACE_SHARE, FIELDS_AROUND, FIELDS_AROUND_KM, SPLIT_KM2, WAVE_RATIO, WAVE_CHANCE, WAVE_KM_A,
             PEOPLE_LEAST, PEOPLE_LEAST_KM2, SPLIT_TOLD_SHARE, FARMERS_TOLD_SHARE, TOLD_LIVES_YEARS, EARLY_SPLIT_YEARS, FARMERS_TOLD,
         )),
         "settle": object(table!(settle:

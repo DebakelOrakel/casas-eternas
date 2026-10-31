@@ -5,6 +5,7 @@ settlement, the exchange and the chronicle. See [README](./README.md) for the fo
 The incubator's controls and layout are in [ui.md](./ui.md).
 
 ## 2026-10-31
+- **changed** New Stone Age: a much stronger people moves into its neighbours and takes their land, so the peoples keep changing after the spread. `incubator.step.newStoneAge`
 - **changed** Old Stone Age: without a chosen origin, the people start on the large landmass from which they reach the most land. `incubator.step.oldStoneAge`
 - **changed** New Stone Age: the land the ice sheets pushed down lies under the sea when the ice melts and rises out of it over thousands of years. `incubator.step.newStoneAge`
 - **new** Chronicle: the map shows the land the ice pushed down as sea while it is under the sea, and the chronicle tells where the sea floods it and where it rises again. `incubator.chronicle.event.seaFloodsIce`
