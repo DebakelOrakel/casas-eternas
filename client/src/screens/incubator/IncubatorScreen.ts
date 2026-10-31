@@ -366,9 +366,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // Called with the chronicle (sayChronicle): the history's peoples and its
   // log come with the history and its settlement.
   function showLanguages(): void {
-    if (languageFixture) return
     const tree = peoples?.tree ?? null
     const log = settled?.log ?? null
+    // The fixture (the debug parameter below) shows until a history is
+    // there; the parameter stays in the address when the screens change.
+    if (languageFixture && !(tree && log)) return
+    languageFixture = false
     if (languagesFrom.tree === tree && languagesFrom.log === log) return
     languagesFrom = { tree, log }
     languageView = tree && log && historyTime && peoples ? deriveLanguageView({ tree, log, start: historyTime.start, end: historyTime.end, languages: peoples.languages }, languagePlaces()) : null
