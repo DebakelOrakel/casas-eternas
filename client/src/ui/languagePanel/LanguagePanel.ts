@@ -220,6 +220,9 @@ export function createLanguagePanel(host: HTMLElement, options: {
   function selectNode(id: string | null): void {
     if (id === selected) return
     selected = id
+    // A language chosen in the tree is to be seen: away from a name shown
+    // (the names tab keeps it for a return).
+    if (work === 'names') work = 'overview'
     lexiconWhole = false
     daughtersWhole = false
     peoplesWhole = false
