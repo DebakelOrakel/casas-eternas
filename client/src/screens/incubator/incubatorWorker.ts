@@ -55,8 +55,11 @@ export type IncubatorAnswer =
   // The old stone age (casas-incubator peopling.rs): its spread as a
   // history's, `flow` left 0; each cell's group and their number; the
   // foragers a km² each reached cell carries in today's climate; its log,
-  // the departure and the landings after open sea; its span, years.
-  | ({ type: 'peopling'; group: Int32Array; groups: number; density: Float32Array; log: LogEvent[]; span: number; ms: number } & PeopleResult)
+  // the departure and the landings after open sea; its span, years;
+  // when the land the ice pushed down is open sea on its controls, as it
+  // and the history take it ([cell, from, to] a run, years; casas-incubator
+  // climate_history.rs THE REBOUND, `flooded_runs`).
+  | ({ type: 'peopling'; group: Int32Array; groups: number; density: Float32Array; log: LogEvent[]; span: number; flooded: Int32Array; ms: number } & PeopleResult)
   | ({ type: 'settle'; ms: number } & SettleResult)
   // `peoples`: each cell's people id (historyPack.ts NO_PEOPLE for none).
   | { type: 'frame'; index: number; people: Float32Array | null; small: Uint8Array | null; peoples: Uint16Array | null; big: { id: string; cells: Int32Array; share: Uint8Array }[]; ms: number }
@@ -165,8 +168,9 @@ async function answer(ask: IncubatorRequest): Promise<void> {
     }
     let groups = 0
     for (const g of group) groups = Math.max(groups, g + 1)
-    const out = { arrival, land, from, flow: new Float32Array(n), origin, crossings, crossingWays: Int32Array.from(ways), group, groups, density: e.peoplingFloats('density'), log, span }
-    worker.postMessage({ type: 'peopling', ms: ms(), ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer, out.group.buffer, out.density.buffer])
+    const flooded = e.floodedRuns(seed, ask.controls.seaLowM)
+    const out = { arrival, land, from, flow: new Float32Array(n), origin, crossings, crossingWays: Int32Array.from(ways), group, groups, density: e.peoplingFloats('density'), log, span, flooded }
+    worker.postMessage({ type: 'peopling', ms: ms(), ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer, out.group.buffer, out.density.buffer, out.flooded.buffer])
     return
   }
   if (ask.type === 'simulate') {

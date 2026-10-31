@@ -47,6 +47,10 @@ export type LogEvent =
   // landmass; `people` moved away from its drying cells; at its cell of
   // the most people moved.
   | { kind: 'drying'; at: number; cell: number; landmass: number; km2: number; people: number }
+  // The sea came into `km2` of a landmass's land the ice left and pushed
+  // down, or that land came up out of the sea, in 500 years
+  // (simulation.rs THE REBOUND'S COASTS); at its deepest cell.
+  | { kind: 'seaFloodsIce' | 'landRises'; at: number; cell: number; landmass: number; km2: number }
   // A cold spell begins (climate_history.rs THE COLD SPELLS), `years` long.
   | { kind: 'coldSpell'; at: number; years: number }
   // THE PEOPLES' CHRONICLE (peoples.rs Tree::tell, 2026-10-29), of the big

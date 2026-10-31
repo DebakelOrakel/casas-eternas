@@ -71,7 +71,12 @@
 //! of it over some thousands of years, as the Baltic's and Hudson Bay's
 //! coasts did. Only the ice's cells sink (`ice_may_cover`, within
 //! ICE_REACH_KM): no sinking beyond the margin and no peripheral bulge.
+//! The chronicle tells the big floods and risings (simulation.rs THE
+//! REBOUND'S COASTS); the incubator's map draws the sunk land as sea at
+//! the time shown (`flooded_runs`).
 
+use crate::habitat::Habitat;
+use crate::simulation::{CLIMATE_YEARS, SPAN_YEARS, ice_distance};
 use casas_generator::climate::koppen::KOPPEN_CODES;
 use casas_generator::core::det_math::{det_cos, det_exp, det_pow, det_sin};
 use casas_generator::core::js;
@@ -335,6 +340,55 @@ impl Rebound {
     pub fn sunk(&self, ice_km: f64, height_m: f64, drop_m: f64, t: f64) -> bool {
         height_m - self.depression_m(ice_km, t) < -drop_m
     }
+
+    /// Whether a land cell is open sea at `t` by its depression: sunk,
+    /// and not under the ice, which reaches `reach_km` from today's
+    /// glaciers then (`cold_share`'s rule). The chronicle's floods and
+    /// risings (simulation.rs THE REBOUND'S COASTS) and the map's sea
+    /// (`flooded_runs`) are this.
+    pub fn flooded(&self, ice_km: f64, height_m: f64, reach_km: f64, drop_m: f64, t: f64) -> bool {
+        ice_km > reach_km && self.sunk(ice_km, height_m, drop_m, t)
+    }
+
+    /// When each of `cells` ([cell, its km from today's glaciers, its
+    /// height above today's sea in m]) is open sea by its depression
+    /// (`flooded`), every `step` from 0 as the simulation takes it: [cell,
+    /// from, to] a run, years (to: the first `step` it is not), in the
+    /// order they end. For the incubator's map.
+    pub fn flooded_runs(&self, history: &ClimateHistory, cells: &[(usize, f64, f64)]) -> Vec<i32> {
+        let samples = self.rows.len() / self.bins;
+        let mut from = vec![-1i64; cells.len()];
+        let mut runs = Vec::new();
+        for k in 0..=samples {
+            let t = k as f64 * self.step;
+            let (reach, drop) = (ICE_REACH_KM * history.cold(t), history.sea_drop_m(t));
+            for (c, &(cell, ice_km, height_m)) in cells.iter().enumerate() {
+                let now = k < samples && self.flooded(ice_km, height_m, reach, drop, t);
+                if now && from[c] < 0 {
+                    from[c] = k as i64;
+                } else if !now && from[c] >= 0 {
+                    runs.extend([cell as i32, (from[c] as f64 * self.step) as i32, t as i32]);
+                    from[c] = -1;
+                }
+            }
+        }
+        runs
+    }
+}
+
+/// When the land the ice pushed down is open sea on a habitat (`Rebound::
+/// flooded_runs`), with `seed`'s climate and the sea `sea_low_m` lower at
+/// cold 1, every CLIMATE_YEARS as step 1 and the history take it: the
+/// land's cells the ice may cover (peopling.rs `dry_at`).
+pub fn flooded_runs(h: &Habitat, seed: f64, sea_low_m: f64) -> Vec<i32> {
+    let history = ClimateHistory::of(seed, SPAN_YEARS).with_sea_low(sea_low_m);
+    let rebound = Rebound::of(&history, SPAN_YEARS, CLIMATE_YEARS);
+    let ice_km = ice_distance(h);
+    let cells: Vec<(usize, f64, f64)> = (0..h.count)
+        .filter(|&i| h.land[i] != 0 && ice_may_cover(h.koppen[i]) && ice_km[i] < f32::INFINITY)
+        .map(|i| (i, ice_km[i] as f64, h.height_m[i] as f64))
+        .collect();
+    rebound.flooded_runs(&history, &cells)
 }
 
 /// The cold spells' starts after `t0` (step 2's start), years, in time, on
@@ -486,6 +540,37 @@ mod tests {
             // Land 50 m high near the glaciers is sea at the melt, land later.
             assert!(rebound.sunk(0.0, 50.0, 0.0, melted));
             assert!(!rebound.sunk(0.0, 50.0, 0.0, melted + 5.0 * REBOUND_YEARS));
+        }
+    }
+
+    #[test]
+    fn the_runs_are_the_flooded_steps() {
+        for seed in 0..20 {
+            let history = ClimateHistory::of(seed as f64, 100_000.0);
+            let rebound = Rebound::of(&history, 100_000.0, 500.0);
+            let cells = [(0, 50.0, 50.0), (1, 150.0, 20.0), (2, 600.0, 0.0)];
+            let runs = rebound.flooded_runs(&history, &cells);
+            let samples = rebound.rows.len() / rebound.bins;
+            for &(cell, ice_km, height_m) in &cells {
+                for k in 0..samples {
+                    let t = k as f64 * 500.0;
+                    let want = rebound.flooded(
+                        ice_km,
+                        height_m,
+                        ICE_REACH_KM * history.cold(t),
+                        history.sea_drop_m(t),
+                        t,
+                    );
+                    let got = runs
+                        .chunks(3)
+                        .any(|r| r[0] == cell as i32 && r[1] as f64 <= t && t < r[2] as f64);
+                    assert_eq!(want, got, "seed {seed} cell {cell} at {t}");
+                }
+            }
+            // The low land near the glaciers floods once the ice left it;
+            // beyond the ice's reach none does.
+            assert!(runs.chunks(3).any(|r| r[0] == 0));
+            assert!(!runs.chunks(3).any(|r| r[0] == 2));
         }
     }
 

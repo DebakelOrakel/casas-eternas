@@ -491,8 +491,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // THE OLD STONE AGE (casas-incubator peopling.rs): its spread in a
   // history's form, with its routes, their order and their way over the
   // sea, as a history's are made (growPeople); each cell's group; its log;
-  // and its input, the origin set by a click in its step and the controls.
-  let stone: { input: PeoplingInput; people: PeopleResult; routes: RouteLine[]; order: Int32Array; sea: Uint8Array; group: Int32Array; groups: number; density: Float32Array; log: LogEvent[]; span: number } | null = null
+  // and its input, the origin set by a click in its step and the controls;
+  // when the land the ice pushed down is open sea on them (the worker's
+  // `flooded`), for both steps.
+  let stone: { input: PeoplingInput; people: PeopleResult; routes: RouteLine[]; order: Int32Array; sea: Uint8Array; group: Int32Array; groups: number; density: Float32Array; log: LogEvent[]; span: number; flooded: Int32Array } | null = null
   // The history's time (historyPack.ts): from the old stone age's end to
   // its first city.
   let historyTime: { start: number; end: number } | null = null
@@ -523,6 +525,21 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // sea covers then (as the ice's layer draws them). The cold's toll on
   // the rest is not taken. Made for the time and kept for it.
   let stoneDensity: { time: number; density: Float32Array } | null = null
+  // THE SUNK LAND at the time shown (2026-10-31, TEG-22): per cell 1
+  // where the land the ice pushed down is open sea then, as step 1 and
+  // the history take it (casas-incubator climate_history.rs THE REBOUND;
+  // the old stone age's runs, `stone.flooded`). Made for the time and
+  // kept for it; null before the old stone age.
+  let floodedShown: { time: number; flooded: Uint8Array } | null = null
+  function floodedNow(): Uint8Array | null {
+    if (!stone || !cellFacts) return null
+    if (floodedShown?.time === peopleTime) return floodedShown.flooded
+    const runs = stone.flooded
+    const flooded = new Uint8Array(cellFacts.land.length)
+    for (let k = 0; k < runs.length; k += 3) if (runs[k + 1] <= peopleTime && peopleTime < runs[k + 2]) flooded[runs[k]] = 1
+    floodedShown = { time: peopleTime, flooded }
+    return flooded
+  }
   function stoneDensityNow(): Float32Array | null {
     if (!stone || !cellFacts) return null
     if (stoneDensity?.time === peopleTime) return stoneDensity.density
@@ -530,10 +547,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const reach = iceHistory ? iceHistory.iceReachKm * iceHistory.cold(peopleTime) : 0
     const drop = iceHistory ? iceHistory.seaDropM(peopleTime) : 0
     const { iceKm, seaDepthM, land } = cellFacts
+    const flooded = floodedNow()
     const density = new Float32Array(arrival.length)
     for (let i = 0; i < density.length; i++) {
       if (!(arrival[i] <= peopleTime)) continue
-      if (land[i] ? iceKm[i] > 0 && iceKm[i] <= reach : seaDepthM[i] > drop) continue
+      if (land[i] ? (iceKm[i] > 0 && iceKm[i] <= reach) || flooded?.[i] : seaDepthM[i] > drop) continue
       density[i] = stone.density[i]
     }
     stoneDensity = { time: peopleTime, density }
@@ -952,6 +970,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const DROWNED_RGB = [40, 90, 150] as const
   const COLD_RGB = [90, 130, 170] as const
   const DRYING_RGB = [190, 150, 80] as const
+  // The land rising where the ice lay (its flooding takes DROWNED_RGB).
+  const REBOUND_RGB = [110, 120, 90] as const
   // The peoples' splits, merges and ends (peoples.rs Tree::tell).
   const PEOPLES_RGB = [150, 80, 60] as const
   function sayChronicle(): void {
@@ -1034,6 +1054,17 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             rgb: DRYING_RGB,
             title: t('incubator.chronicle.event.drying'),
             detail: t('incubator.chronicle.dryingDetail', { landmass: landmassName(e.landmass), area: Math.round(e.km2).toLocaleString(getLocale()), people: Math.round(e.people).toLocaleString(getLocale()) }),
+          }, e.cell)
+        } else if (e.kind === 'seaFloodsIce' || e.kind === 'landRises') {
+          // THE REBOUND'S COASTS (casas-incubator simulation.rs).
+          const flood = e.kind === 'seaFloodsIce'
+          const area = { landmass: landmassName(e.landmass), area: Math.round(e.km2).toLocaleString(getLocale()) }
+          place({
+            time: e.at,
+            icon: flood ? '/icons/ocean.png' : '/icons/continent.png',
+            rgb: flood ? DROWNED_RGB : REBOUND_RGB,
+            title: t(flood ? 'incubator.chronicle.event.seaFloodsIce' : 'incubator.chronicle.event.landRises'),
+            detail: t(flood ? 'incubator.chronicle.seaFloodsIceDetail' : 'incubator.chronicle.landRisesDetail', area),
           }, e.cell)
         } else if (e.kind === 'coldSpell') {
           // No place: the whole world's.
@@ -1727,7 +1758,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     p.flow = Float32Array.from(flowAt(p, order, Infinity, (cell) => p.land[cell]))
     const sea = new Uint8Array(p.arrival.length)
     for (const cell of p.crossingWays) if (cell >= 0 && !p.land[cell]) sea[cell] = 1
-    stone = { input: peoplingInput(done.origin, controls), people: p, routes: [], order, sea, group: done.group, groups: done.groups, density: done.density, log: done.log, span: done.span }
+    stone = { input: peoplingInput(done.origin, controls), people: p, routes: [], order, sea, group: done.group, groups: done.groups, density: done.density, log: done.log, span: done.span, flooded: done.flooded }
+    floodedShown = null
     showPeoplingControls()
     showTimeRange()
     stoneDensity = null
@@ -1836,6 +1868,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     probe: (cell) => groupRows(at(cell)),
   })
+  // THE ICE AND THE SEA's colours: the ice, the dry shelf, the sunk land
+  // (the sea's).
+  const ICE_RGB: [number, number, number] = [245, 248, 252]
+  const SHELF_RGB: [number, number, number] = [226, 206, 160]
+  const SUNK_RGB: [number, number, number] = [150, 185, 210]
   // Every step shows every layer (ui/layerPanel, 2026-10-26): the steps
   // compute, the panel chooses.
   const TRIALS: readonly TrialLayer[] = [
@@ -1862,24 +1899,28 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     {
       // THE ICE AND THE SEA at the time shown
       // (casas-incubator/climate_history.rs): the ice grown past today's
-      // glaciers, white; the shelf the low sea lays dry, sand. As the history's
-      // simulation has them.
+      // glaciers, white; the shelf the low sea lays dry, sand; the land the
+      // ice pushed down under the sea (THE SUNK LAND), sea. As the
+      // history's simulation has them.
       on: () => flowOn['iceAge'] && cellFacts !== null && iceHistory !== null,
       paint: (o) => {
         if (!cellFacts || !iceHistory) return
         const reach = iceHistory.iceReachKm * iceHistory.cold(peopleTime)
         const drop = iceHistory.seaDropM(peopleTime)
         const { iceKm, seaDepthM, land } = cellFacts
+        const flooded = floodedNow()
         for (let k = 0; k < o.owners.length; k++) {
           const cell = o.owners[k]
           if (land[cell]) {
-            if (iceKm[cell] > 0 && iceKm[cell] <= reach) putTexel(o, k, [245, 248, 252], 0.85)
-          } else if (seaDepthM[cell] <= drop) putTexel(o, k, [226, 206, 160], 0.75)
+            if (iceKm[cell] > 0 && iceKm[cell] <= reach) putTexel(o, k, ICE_RGB, 0.85)
+            else if (flooded?.[cell]) putTexel(o, k, SUNK_RGB, 0.85)
+          } else if (seaDepthM[cell] <= drop) putTexel(o, k, SHELF_RGB, 0.75)
         }
       },
       legend: () => [{ type: 'swatches', title: t('incubator.layers.iceAge.label'), items: [
-        { label: t('incubator.layers.iceAge.ice'), rgb: [245, 248, 252] },
-        { label: t('incubator.layers.iceAge.shelf'), rgb: [226, 206, 160] },
+        { label: t('incubator.layers.iceAge.ice'), rgb: ICE_RGB },
+        { label: t('incubator.layers.iceAge.shelf'), rgb: SHELF_RGB },
+        ...(floodedNow()?.includes(1) ? [{ label: t('common.layers.sea.label'), rgb: SUNK_RGB } satisfies LegendItem] : []),
       ] }],
       probe: () => [],
     },

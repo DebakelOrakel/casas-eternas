@@ -685,8 +685,21 @@ Building since 2026-10-27:
   floods land no one lives in yet (the ice left it), and it moves the
   histories by their draws: the land farmed and the people at the end
   hardly change. The incubator's map draws the coast by the sea's drop
-  alone: it does not show the sunk land. The smoke test's sphere reaches
-  no herding centre and no told merge with seed 5 now; seed 4 reaches all.
+  alone: it does not show the sunk land (until the next entry). The smoke
+  test's sphere reaches no herding centre and no told merge with seed 5
+  now; seed 4 reaches all.
+- 2026-10-31 (v6 still): the rebound on the map and in the chronicle
+  (TEG-22). The map's "Ice and sea level" layer draws the sunk land as
+  sea at the time shown, in step 1 and step 2, from the crate's runs
+  (climate_history.rs `flooded_runs`, through the WASM build's
+  `floodedRuns`; no copy in TypeScript); the old stone age's people are
+  not drawn on it. The log tells where the sea comes into the land the ice
+  left (`seaFloodsIce`) and where it comes up again (`landRises`), per
+  landmass, REBOUND_TOLD_KM2 (100 000 km²) or more in a CLIMATE_YEARS
+  (simulation.rs THE REBOUND'S COASTS). The climate alone moves them: on
+  Morvane none (at most 19 000 km² a step), on Thalassor five floods
+  from +1 000 to +3 000 (104 000 to 165 000 km²) and a rise at +4 000
+  (100 000), on Zephyra a flood at +4 500 (110 000).
 
 Open:
 

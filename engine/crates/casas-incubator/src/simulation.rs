@@ -162,6 +162,24 @@ pub(crate) const DROWNED_TOLD_KM2: f64 = 50_000.0;
 // each, the chronicle had 9, 13 and 8 of them. Once a landmass at 250 000
 // it has 1 to 3 a world.
 pub(crate) const DRYING_TOLD_KM2: f64 = 250_000.0;
+// THE REBOUND'S COASTS (2026-10-31, TEG-22): where the land the ice
+// pushed down (climate_history.rs THE REBOUND) turns open sea in one
+// CLIMATE_YEARS — the ice left it while it was under the sea of its time
+// — and where it comes up out of the sea again, per landmass
+// (`Rebound::flooded`, the land's cells within the ice's reach). Where
+// either comes to REBOUND_TOLD_KM2 or more, the log tells it
+// (`SeaFloodsIce`, `LandRises`), at its deepest cell (the nearest to
+// today's glaciers). The climate alone moves these coasts, not the
+// people: an origin changes only where the history ends. On the three
+// worlds (v15, 2026-10-31) the sea came into a landmass's land by at
+// most 19 000, 165 000 and 110 000 km² in a CLIMATE_YEARS (Morvane,
+// Thalassor, Zephyra), and the land rose by at most 7 000, 100 000 and
+// 43 000, both every CLIMATE_YEARS for thousands of years: at
+// DROWNED_TOLD_KM2 the chronicle told 0, 15 and 6 of them, from +500
+// to +6 000 on Thalassor. At 100 000,
+// some the Gulf of Bothnia's area (117 000 km²; from memory), it tells
+// 0, 6 and 1: the big floods and the big rise.
+pub(crate) const REBOUND_TOLD_KM2: f64 = 100_000.0;
 // THE GAME (2026-10-26), every GAME_STEPS steps on the cells people live in
 // or have hunted: the small game and the big game, a share each of what the
 // land holds without people. Each grows back toward it (SMALL_REGROW_A,
@@ -1648,6 +1666,20 @@ pub fn simulate(
     // Step 1's end, where the history begins, and its log.
     let start = input.peopling;
     let t0 = start.span;
+    // THE REBOUND'S COASTS: the land's cells within the ice's reach, and
+    // whether each is open sea, at t0.
+    let rebound_cells: Vec<usize> = (0..n)
+        .filter(|&i| land[i] != 0 && ice_km[i] < f32::INFINITY)
+        .collect();
+    // The ice's reach and the sea's drop at `t`.
+    let reach_drop = |t: f64| (ICE_REACH_KM * climate.cold(t), climate.sea_drop_m(t));
+    let flooded_at = |i: usize, (reach, drop): (f64, f64), t: f64| {
+        rebound.flooded(ice_km[i] as f64, h.height_m[i] as f64, reach, drop, t)
+    };
+    let mut flooded: Vec<bool> = rebound_cells
+        .iter()
+        .map(|&i| flooded_at(i, reach_drop(t0), t0))
+        .collect();
     sim.log.extend(start.log.iter().cloned());
     // The cold spells, all after t0 (THE COLD SPELLS); the cold a spell
     // added at the last step.
@@ -1955,6 +1987,57 @@ pub fn simulate(
                         people,
                     });
                 }
+            }
+            // THE REBOUND'S COASTS: each landmass's land the sea came into
+            // and the land that came up out of it since the last
+            // CLIMATE_YEARS, in the order of its first cell: [landmass,
+            // whether risen, km², its deepest cell, its km from today's
+            // glaciers]. Land the ice covers again is neither.
+            let mut moved_coast: Vec<(i32, bool, f64, usize, f32)> = Vec::new();
+            let (reach, drop) = reach_drop(t);
+            for (k, &i) in rebound_cells.iter().enumerate() {
+                let now = flooded_at(i, (reach, drop), t);
+                if now == flooded[k] {
+                    continue;
+                }
+                flooded[k] = now;
+                if ice_km[i] as f64 <= reach {
+                    continue;
+                }
+                let (m, risen) = (h.landmass[i], !now);
+                let e = match moved_coast.iter().position(|e| e.0 == m && e.1 == risen) {
+                    Some(e) => e,
+                    None => {
+                        moved_coast.push((m, risen, 0.0, i, f32::INFINITY));
+                        moved_coast.len() - 1
+                    }
+                };
+                let e = &mut moved_coast[e];
+                e.2 += h.area_km2[i] as f64;
+                if ice_km[i] < e.4 {
+                    (e.3, e.4) = (i, ice_km[i]);
+                }
+            }
+            for &(m, risen, km2, cell, _) in &moved_coast {
+                if km2 < REBOUND_TOLD_KM2 {
+                    continue;
+                }
+                let (at, cell, landmass) = (t, cell as f64, m as f64);
+                sim.log.push(if risen {
+                    LogEvent::LandRises {
+                        at,
+                        cell,
+                        landmass,
+                        km2,
+                    }
+                } else {
+                    LogEvent::SeaFloodsIce {
+                        at,
+                        cell,
+                        landmass,
+                        km2,
+                    }
+                });
             }
             // THE LAND DRYING: the people over what a drying cell carries
             // now leave it, all cells first brought to what they carry;

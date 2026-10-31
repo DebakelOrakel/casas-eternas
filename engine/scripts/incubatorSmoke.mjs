@@ -371,6 +371,9 @@ for (const kind of ['torus', 'sphere']) {
 // DROWNED_TOLD_KM2 of these small worlds' shelves in a CLIMATE_YEARS.
 // Not 'drying' (2026-10-29): no landmass of these small worlds loses
 // DRYING_TOLD_KM2 of its dry belt in a CLIMATE_YEARS.
+// Not 'seaFloodsIce' and not 'landRises' (2026-10-31, TEG-22): the
+// rebound's coasts move less than REBOUND_TOLD_KM2 of these small worlds'
+// land in a CLIMATE_YEARS; the bits did not change with them.
 // THE PEOPLES (2026-10-29): two big ones alive at the end on a world, a
 // people parted from another, one merged into another; the chronicle's
 // events of each kind (peoples.rs Tree::tell). A told split and a told

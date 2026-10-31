@@ -114,6 +114,24 @@ pub enum LogEvent {
         km2: f64,
         people: f64,
     },
+    /// The sea came into `km2` of a landmass's land that the ice left
+    /// and pushed down, in one CLIMATE_YEARS (simulation.rs THE REBOUND'S
+    /// COASTS); at its deepest cell.
+    SeaFloodsIce {
+        at: f64,
+        cell: f64,
+        landmass: f64,
+        km2: f64,
+    },
+    /// `km2` of a landmass's land the ice pushed down came up out of the
+    /// sea in one CLIMATE_YEARS (simulation.rs THE REBOUND'S COASTS); at
+    /// its deepest cell.
+    LandRises {
+        at: f64,
+        cell: f64,
+        landmass: f64,
+        km2: f64,
+    },
     /// A cold spell begins (climate_history.rs THE COLD SPELLS), `years`
     /// long.
     ColdSpell {
@@ -180,6 +198,8 @@ impl LogEvent {
             | LogEvent::City { at, .. }
             | LogEvent::Drowned { at, .. }
             | LogEvent::Drying { at, .. }
+            | LogEvent::SeaFloodsIce { at, .. }
+            | LogEvent::LandRises { at, .. }
             | LogEvent::ColdSpell { at, .. }
             | LogEvent::PeopleSplit { at, .. }
             | LogEvent::PeopleMerged { at, .. }
@@ -421,6 +441,35 @@ impl LogEvent {
                     .number(*km2)
                     .key("people")
                     .number(*people);
+            }
+            LogEvent::SeaFloodsIce {
+                at,
+                cell,
+                landmass,
+                km2,
+            }
+            | LogEvent::LandRises {
+                at,
+                cell,
+                landmass,
+                km2,
+            } => {
+                kind(
+                    j,
+                    if matches!(self, LogEvent::SeaFloodsIce { .. }) {
+                        "seaFloodsIce"
+                    } else {
+                        "landRises"
+                    },
+                );
+                j.key("at")
+                    .number(*at)
+                    .key("cell")
+                    .number(*cell)
+                    .key("landmass")
+                    .number(*landmass)
+                    .key("km2")
+                    .number(*km2);
             }
             LogEvent::ColdSpell { at, years } => {
                 kind(j, "coldSpell");

@@ -53,7 +53,10 @@ use serde_json::{Map, Value, json};
 /// the landmass from which step 1 reaches the most land (history.rs
 /// `origin_of`, TEG-7, 2026-10-31); the post-glacial rebound: the land
 /// the ice pushed down is sea until it comes up again, in step 1 and step
-/// 2 (climate_history.rs THE REBOUND, TEG-22, 2026-10-31).
+/// 2 (climate_history.rs THE REBOUND, TEG-22, 2026-10-31); the log tells
+/// where the sea floods the land the ice left and where it rises again
+/// (simulation.rs THE REBOUND'S COASTS, `SeaFloodsIce` and `LandRises`,
+/// TEG-22, 2026-10-31).
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
@@ -101,7 +104,7 @@ pub fn constants() -> Value {
         "simulation": object(table!(simulation:
             SPAN_YEARS, KEEP_YEARS, POPULATION_STEP, STEP_YEARS, PEOPLE_FRAME_STEP, CAME_STEP, SETTLE_AFTER, FISH_RICH,
             SUB_STEPS, FORAGER_DENSITY, CARRYING_FULL, GROWTH_A, SEED_SHARE, SEED_PEOPLE, FULL_SHARE,
-            SPEED_MIN_KM_A, SPEED_MAX_KM_A, SLOPE_DRAG, CORRIDOR, SHELF_M, CLIMATE_YEARS, DROWNED_TOLD_KM2, DRYING_TOLD_KM2, GAME_STEPS,
+            SPEED_MIN_KM_A, SPEED_MAX_KM_A, SLOPE_DRAG, CORRIDOR, SHELF_M, CLIMATE_YEARS, DROWNED_TOLD_KM2, DRYING_TOLD_KM2, REBOUND_TOLD_KM2, GAME_STEPS,
             SMALL_REGROW_A, BIG_REGROW_A, HUNT_A, BIG_HUNT_A, HOME_WARY, PLANT_FOOD, SMALL_FOOD, BIG_FOOD,
             EXTINCT_BELOW, FOOD_MOVED, CAPACITY_MOVED, FISH_GAIN, CAMP_YEARS, CAMP_DAYS_MOST, CAMP_MOVE,
             VILLAGE_DAYS_MOST, DRY_SQUARE_KM, DRY_SCALE, STORE_STEPS, DRY_KEEP, DRY_BELOW, ENSO_CHANCE,

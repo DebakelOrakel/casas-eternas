@@ -5,7 +5,7 @@
 //! grown and run on it.
 
 use casas_incubator::chart::{ChartPass, PeriodicTriangulation, chart_pass, level_mesh, raster};
-use casas_incubator::climate_history::{ClimateHistory, ICE_REACH_KM, SEA_DROP_M};
+use casas_incubator::climate_history::{ClimateHistory, ICE_REACH_KM, SEA_DROP_M, flooded_runs};
 use casas_incubator::flora::{Layer, grow_flora, populate};
 use casas_incubator::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
 use casas_incubator::history::{RainChart, carrying_of, origin_of, run_history};
@@ -438,6 +438,16 @@ impl Incubator {
             seed,
             controls_of(reach_km, sea_low_m),
         )
+    }
+
+    /// When the land the ice pushed down is open sea (climate_history.rs
+    /// THE REBOUND, `Rebound::flooded_runs`), on step 1's seed and its
+    /// sea's drop at cold 1 (its default where not given), as step 1 and
+    /// the history take it: [cell, from, to] a run, years from the
+    /// departure. For the map.
+    #[wasm_bindgen(js_name = floodedRuns)]
+    pub fn flooded_runs(&self, seed: f64, sea_low_m: Option<f64>) -> Vec<i32> {
+        flooded_runs(&self.habitat, seed, controls_of(None, sea_low_m).sea_low_m)
     }
 
     #[wasm_bindgen(js_name = landmassKm2)]
