@@ -68,6 +68,15 @@ export interface NameEntry {
   cell: number
   // The year it was given.
   given: number
+  // Its older names (the peoples before gave them; the latest first), and
+  // what other languages call it: each with the node of its language.
+  older?: readonly OtherName[]
+  exonyms?: readonly OtherName[]
+}
+
+export interface OtherName {
+  name: string
+  language: string
 }
 
 export interface LanguageDetail {

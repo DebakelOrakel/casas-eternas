@@ -29,6 +29,11 @@ import type { LogEvent } from './historyLogShared'
 // THE NAMES (since 2026-10-31, TEG-139; the crate's place_names.rs and
 // pack.rs): the places' names as recipes (PlaceNamesPacked). A history
 // packed before them has none (`names` null).
+//
+// THE OTHER NAMES (since 2026-10-31, TEG-142, TEG-143; the crate's
+// name_contact.rs and pack.rs): the old names where another people took a
+// place, and the exonyms (AliasesPacked). A history packed before them has
+// none (`aliases` null).
 
 type Typed = Float32Array | Int32Array | Uint8Array | Uint16Array
 const TYPES = { f32: Float32Array, i32: Int32Array, u8: Uint8Array, u16: Uint16Array } as const
@@ -187,6 +192,41 @@ export const NAME_ARRAYS: Record<keyof PlaceNamesPacked, string> = {
   own: 'nameOwn',
 }
 
+// THE OTHER NAMES (pack.rs `alias…`, place_names.rs Aliases): by entry
+// the name it is of (of PlaceNamesPacked), how it came (NAME_HOW), the
+// node it is in, the year, and what it says: a recipe (its pattern, two
+// meanings, its word of its own as `sounds`) or a loan (`pattern` 255; its
+// words as sounds, 255 between two; `meaning` its word for its kind, 255
+// for none, and 1 where that word stands first). The letters follow from
+// the tree and the kit, through the crate (its WASM `PlaceNames`).
+export interface AliasesPacked {
+  name: Int32Array
+  how: Uint8Array
+  namer: Uint16Array
+  year: Float32Array
+  pattern: Uint8Array
+  meaning: Uint8Array
+  length: Uint8Array
+  sounds: Uint8Array
+}
+
+// How a name came (`AliasesPacked.how`; the crate's place_names.rs `how`);
+// a place's first name is NAME_FIRST.
+export const NAME_HOW = ['renamed', 'kept', 'borrowed', 'translated', 'own'] as const
+export const NAME_FIRST = 255
+
+// The other names' arrays by their pack names.
+export const ALIAS_ARRAYS: Record<keyof AliasesPacked, string> = {
+  name: 'aliasName',
+  how: 'aliasHow',
+  namer: 'aliasNamer',
+  year: 'aliasYear',
+  pattern: 'aliasPattern',
+  meaning: 'aliasMeaning',
+  length: 'aliasLength',
+  sounds: 'aliasSounds',
+}
+
 // What a packed history holds.
 export interface PackedHistory {
   people: PeopleResult
@@ -215,6 +255,7 @@ export interface PackedHistory {
   peoples: PeoplesTree
   languages: LanguagesTree
   names: PlaceNamesPacked | null
+  aliases: AliasesPacked | null
 }
 
 interface Plain {
@@ -298,6 +339,7 @@ export function unpackHistory(buffer: ArrayBuffer): PackedHistory | null {
       },
       languages: Object.fromEntries(Object.entries(LANGUAGE_ARRAYS).map(([key, name]) => [key, get(name)])) as unknown as LanguagesTree,
       names: arrays.has(NAME_ARRAYS.kind) ? (Object.fromEntries(Object.entries(NAME_ARRAYS).map(([key, name]) => [key, get(name)])) as unknown as PlaceNamesPacked) : null,
+      aliases: arrays.has(ALIAS_ARRAYS.name) ? (Object.fromEntries(Object.entries(ALIAS_ARRAYS).map(([key, name]) => [key, get(name)])) as unknown as AliasesPacked) : null,
     }
   } catch {
     return null

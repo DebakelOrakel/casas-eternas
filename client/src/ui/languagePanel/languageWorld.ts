@@ -1,7 +1,7 @@
 import { t, type TKey } from '../../i18n/i18n'
 import { formatCount } from '../format'
-import { button, el } from './languageDom'
-import type { LanguageNode, LanguageView } from './languageTypes'
+import { button, el, nodeName } from './languageDom'
+import type { LanguageNode, LanguageView, NameEntry } from './languageTypes'
 
 // THE WORLD SIDE of one language (LanguagePanel.ts): where it is spoken,
 // by whom, and the names given in it. The full layout's right column; the
@@ -13,6 +13,8 @@ const FIRST_PEOPLES = 3
 export const FIRST_NAMES = 3
 // How many more names "show all" shows at a time: a language has thousands.
 export const NAMES_PAGE = 50
+// How many exonyms a name's line shows; an ellipsis for the rest.
+export const EXONYMS_SHOWN = 6
 
 export interface WorldState {
   view: LanguageView
@@ -36,6 +38,18 @@ function section(titleKey: TKey, fullOnly = false): { element: HTMLElement; body
   return { element, body }
 }
 
+// A name's other names on one line, with no words of the interface (the
+// names and the languages' names are the world's content): its older
+// names, each "← name (language)", the latest first; then what other
+// languages call it, "language: name", " · " between two.
+function otherNames(entry: NameEntry, languageName: (id: string) => string): string {
+  const older = (entry.older ?? []).map((o) => `← ${o.name} (${languageName(o.language)})`)
+  const exonyms = entry.exonyms ?? []
+  const shown = exonyms.slice(0, EXONYMS_SHOWN).map((o) => `${languageName(o.language)}: ${o.name}`)
+  if (exonyms.length > EXONYMS_SHOWN) shown.push('…')
+  return [older.join(' '), shown.join(' · ')].filter((x) => x !== '').join('   ')
+}
+
 export function renderWorld(state: WorldState, actions: WorldActions): HTMLElement {
   const { view, node } = state
   const root = el('div', 'language-world')
@@ -54,13 +68,21 @@ export function renderWorld(state: WorldState, actions: WorldActions): HTMLEleme
   }
 
   const names = view.names(node.id, 0, state.namesShown, state.year)
+  const byId = new Map(view.nodes.map((n) => [n.id, n]))
+  const languageName = (id: string): string => {
+    const n = byId.get(id)
+    return n ? nodeName(n) : ''
+  }
   if (names.total > 0) {
     const { element, body } = section('language.world.names', true)
     for (const entry of names.rows) {
       const line = el('button', 'language-world__name')
       line.type = 'button'
       line.addEventListener('click', () => actions.showOnMap({ cell: entry.cell }))
-      line.append(el('span', 'language-world__name-text', entry.name), el('span', 'language-world__name-kind', t(`language.place.${entry.kind}` as TKey)))
+      const text = el('span', 'language-world__name-text', entry.name)
+      const others = otherNames(entry, languageName)
+      if (others) text.append(el('span', 'language-world__name-other', others))
+      line.append(text, el('span', 'language-world__name-kind', t(`language.place.${entry.kind}` as TKey)))
       body.append(line)
     }
     const rest = names.total - names.rows.length

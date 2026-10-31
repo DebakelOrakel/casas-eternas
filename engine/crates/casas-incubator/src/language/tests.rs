@@ -434,3 +434,26 @@ fn print_samples() {
         println!("{}", serde_json::to_string_pretty(&sample(seed)).unwrap());
     }
 }
+
+// A LOAN (loan.rs): a word of another language fitted to a language is in
+// its sounds, and its syllable rules allow it.
+#[test]
+fn a_loan_fits_the_borrowers_sounds() {
+    let (mut all, mut fit) = (0, 0);
+    for seed in 0..40u32 {
+        let lang = Language::proto(seed);
+        let donor = Language::proto(seed + 1000);
+        let sounds = lang.inventory.sounds();
+        for (_, w) in donor.lexicon() {
+            let loan = lang.fit(&w.sounds);
+            assert!(
+                loan.iter().all(|p| sounds.contains(p)),
+                "a loan's sound not the borrower's"
+            );
+            assert!(loan.iter().any(|p| p.sound().vowel));
+            all += 1;
+            fit += usize::from(lang.pronounceable(&loan));
+        }
+    }
+    assert_eq!(fit, all, "{fit} of {all} loans fit");
+}

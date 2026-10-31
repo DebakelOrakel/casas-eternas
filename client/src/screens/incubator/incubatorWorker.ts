@@ -5,7 +5,7 @@ import type { AnimalLayer, CellInput, PeopleResult, PlantLayer, SettleResult, Tr
 import { incubatorOf } from './historyInput'
 import type { LogEvent } from './historyLogShared'
 import { peopleIdsOf, unpackHistory, unpackSettled, type LanguagesTree, type PackedHistory, type PeoplesTree } from './historyPack'
-import { TOWN_PEOPLE, type HistoryLanguages, type HistoryNames, type LanguagesMade } from './languageView'
+import { formsOf, otherNamesOf, TOWN_PEOPLE, type HistoryLanguages, type HistoryNames, type LanguagesMade, type OthersRaw } from './languageView'
 import { PEOPLE_FRAME_STEP } from './peopleShared'
 import type { PeoplingInput } from '../../world/historyArtifacts'
 import { PLANTS } from './plants'
@@ -92,16 +92,20 @@ function languagesOf(h: PackedHistory): HistoryLanguages {
 }
 
 // THE NAMES of a history (TEG-139): its packed recipes, and their forms
-// over time as the crate spells them (its `PlaceNames`); null for a
-// history packed before them.
+// over time as the crate spells them (its `PlaceNames`); with THE OTHER
+// NAMES (TEG-142, TEG-143), the old names and the exonyms (none for a
+// history packed before them); null for a history packed before the names.
 function namesOf(h: PackedHistory): HistoryNames | null {
   const n = h.names
   if (!n) return null
   const l = h.languages
-  const book = new PlaceNames(l.peopleLanguage, l.parent, l.level, l.people, l.from, l.at, l.until, l.seed, l.style, l.changeStart, l.changeYear, l.change, l.changeChoice, l.wordStart, l.wordYear, l.wordMeaning, n.kind, n.place, n.cell, n.namer, n.year, n.pattern, n.meaning, n.ownLength, n.own)
+  const a = h.aliases
+  const book = new PlaceNames(l.peopleLanguage, l.parent, l.level, l.people, l.from, l.at, l.until, l.seed, l.style, l.changeStart, l.changeYear, l.change, l.changeChoice, l.wordStart, l.wordYear, l.wordMeaning, n.kind, n.place, n.cell, n.namer, n.year, n.pattern, n.meaning, n.ownLength, n.own, a?.name ?? new Int32Array(), a?.how ?? new Uint8Array(), a?.namer ?? new Uint16Array(), a?.year ?? new Float32Array(), a?.pattern ?? new Uint8Array(), a?.meaning ?? new Uint8Array(), a?.length ?? new Uint8Array(), a?.sounds ?? new Uint8Array())
   let raw: (number | string)[][]
+  let others: OthersRaw
   try {
     raw = JSON.parse(book.forms(0, book.count())) as (number | string)[][]
+    others = JSON.parse(book.others(0, book.count())) as OthersRaw
   } finally {
     book.free()
   }
@@ -113,7 +117,8 @@ function namesOf(h: PackedHistory): HistoryNames | null {
     cell: n.cell.slice(),
     namer: n.namer.slice(),
     year: n.year.slice(),
-    forms: raw.map((list) => ({ years: list.filter((_, k) => k % 2 === 0) as number[], forms: list.filter((_, k) => k % 2 === 1) as string[] })),
+    forms: raw.map(formsOf),
+    ...otherNamesOf(others),
   }
 }
 

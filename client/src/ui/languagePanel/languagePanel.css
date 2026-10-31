@@ -789,6 +789,14 @@
   flex-grow: 1;
 }
 
+/* A name's older names and exonyms, under it. */
+.language-world__name-other {
+  display: block;
+  padding-bottom: 4px;
+  font-size: 11.5px;
+  color: var(--dc-muted);
+}
+
 .language-overview__daughter-value,
 .language-world__name-kind {
   font-size: 11.5px;

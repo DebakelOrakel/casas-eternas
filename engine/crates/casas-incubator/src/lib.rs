@@ -17,6 +17,7 @@ pub mod history;
 pub mod language;
 pub mod languages;
 pub mod log;
+pub mod name_contact;
 pub mod niche;
 pub mod pack;
 pub mod peoples;

@@ -81,6 +81,10 @@ pub fn names_of_places(
     kinds: Uint8Array,
     people: Int32Array,
     years: Float64Array,
+    held_place: Int32Array,
+    held_year: Float64Array,
+    held_people: Int32Array,
+    contacts: Float64Array,
 ) -> String {
     let peoples: Vec<PeopleInput> = (0..parent.len())
         .map(|p| PeopleInput {
@@ -96,7 +100,19 @@ pub fn names_of_places(
             heart_apart: heart_apart[p],
         })
         .collect();
-    names_of_places_json(&peoples, seed, start, end, &kinds, &people, &years)
+    names_of_places_json(
+        &peoples,
+        seed,
+        start,
+        end,
+        &kinds,
+        &people,
+        &years,
+        &held_place,
+        &held_year,
+        &held_people,
+        &contacts,
+    )
 }
 
 fn error(message: String) -> napi::Error {

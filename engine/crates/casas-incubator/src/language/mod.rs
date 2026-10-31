@@ -14,6 +14,8 @@
 //!   name as a recipe whose form comes from a language.
 //! - THE SPELLING (`spelling.rs`): a style of spelling.json, sounds to
 //!   letters.
+//! - A LOAN (`loan.rs`, TEG-142): a word of another language fitted to
+//!   the sounds and the syllable rules of a language.
 //! - THE SOUND CHANGES (`change.rs`): a template of changes.json applied
 //!   to one word, and to a whole language (`Language::sound_change`). The
 //!   tree of the languages (languages.rs, TEG-138) chains them.
@@ -27,6 +29,7 @@ mod change;
 mod draw;
 mod inventory;
 mod kit;
+mod loan;
 mod names;
 mod notation;
 mod spelling;
@@ -38,6 +41,7 @@ pub use change::{Change, apply_change, change, changes};
 pub use draw::{Draw, mix, seed_of};
 pub use inventory::{IMPLICATION_ROUNDS, Inventory, Stress};
 pub use kit::{Kit, Sound, kit, weight};
+pub use loan::{FIT_STEPS, distance, nearest};
 pub use names::{
     Compounding, ENDING_TRIES, Ending, Grammar, JOINER_ALWAYS, Joiner, Kind, NameRecipe,
     PEOPLE_PREFIX, Slot,

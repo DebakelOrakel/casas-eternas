@@ -8,8 +8,9 @@
 // peoples (their arrays in the pack, since the incubator's v3), where its
 // goods came from (their arrays in the pack, since 2026-10-30), its
 // languages (their arrays in the pack, since 2026-10-31), its places'
-// names (their arrays in the pack, since 2026-10-31, TEG-139) and its
-// settlement, hashed, must be the reference's. The reference was recorded
+// names (their arrays in the pack, since 2026-10-31, TEG-139), their old
+// names and exonyms (their arrays in the pack, since 2026-10-31, TEG-142,
+// TEG-143) and its settlement, hashed, must be the reference's. The reference was recorded
 // while the TypeScript the crate was ported from still stood beside it and
 // gave the same bits (2026-10-27; and on Morvane, the whole H1 alike); it
 // is recorded again only on purpose, with --record, when the history is
@@ -202,7 +203,9 @@ const hashOf = (...parts) => {
 // WHERE THE GOODS CAME FROM (the pack's arrays after the peoples since the
 // incubator's v6, 2026-10-30; pack.rs) and THE LANGUAGES (after the goods
 // since 2026-10-31, TEG-138; languages.rs) and THE NAMES (after the
-// languages since 2026-10-31, TEG-139; place_names.rs): each hashed apart,
+// languages since 2026-10-31, TEG-139; place_names.rs) and THE OTHER NAMES
+// (after the names since 2026-10-31, TEG-142, TEG-143; name_contact.rs):
+// each hashed apart,
 // and the history's hash is that of the pack without them, the bytes it
 // had before them. So none can change the rest of the history's arrays
 // unseen. (The languages' events are in the log, the header: they change
@@ -211,17 +214,19 @@ const pad8 = (n) => (n + 7) & ~7
 const GOODS = /^goods/
 const LANGUAGES = /^(language|peopleLanguage$)/
 const NAMES = /^name/
+const ALIASES = /^alias/
 function tailApart(pack) {
   const bytes = bytesOf(pack)
   const length = bytes.readUInt32LE(0)
   const head = bytes.subarray(4, 4 + length).toString('utf8')
   const arrays = JSON.parse(head).arrays
-  const tail = (a) => GOODS.test(a.name) || LANGUAGES.test(a.name) || NAMES.test(a.name)
+  const tail = (a) => GOODS.test(a.name) || LANGUAGES.test(a.name) || NAMES.test(a.name) || ALIASES.test(a.name)
   const goods = arrays.filter((a) => GOODS.test(a.name))
   const languages = arrays.filter((a) => LANGUAGES.test(a.name))
   const names = arrays.filter((a) => NAMES.test(a.name))
+  const aliases = arrays.filter((a) => ALIASES.test(a.name))
   const end = Math.min(...arrays.filter(tail).map((a) => a.offset))
-  if (goods.length !== 4 || languages.length !== 17 || names.length !== 9 || arrays.some((a) => !tail(a) && a.offset >= end)) throw new Error('the goods, the languages and the names are not the pack\'s last arrays')
+  if (goods.length !== 4 || languages.length !== 17 || names.length !== 9 || aliases.length !== 8 || arrays.some((a) => !tail(a) && a.offset >= end)) throw new Error('the goods, the languages, the names and the other names are not the pack\'s last arrays')
   const parsed = JSON.parse(head)
   parsed.arrays = arrays.filter((a) => !tail(a))
   const rest = Buffer.from(JSON.stringify(parsed), 'utf8')
@@ -233,7 +238,7 @@ function tailApart(pack) {
   const size = { i32: 4, f32: 4, u16: 2, u8: 1 }
   const of = (list) => Object.fromEntries(list.map((a) => [a.name, bytes.subarray(data + a.offset, data + a.offset + a.length * size[a.type])]))
   const tailBytes = (list) => list.reduce((s, a) => s + a.length * size[a.type], 0)
-  return { history, goods: of(goods), languages: of(languages), names: of(names), bytes: bytes.length, before: history.length, goodsBytes: tailBytes(goods), languageBytes: tailBytes(languages), nameBytes: tailBytes(names) }
+  return { history, goods: of(goods), languages: of(languages), names: of(names), aliases: of(aliases), bytes: bytes.length, before: history.length, goodsBytes: tailBytes(goods), languageBytes: tailBytes(languages), nameBytes: tailBytes(names), aliasBytes: tailBytes(aliases) }
 }
 // STEP 1'S CONTROLS (2026-10-30, DES-0032): the defaults given are the
 // defaults left out (the history's bits above are the defaults'); another
@@ -294,6 +299,7 @@ for (const kind of ['torus', 'sphere']) {
   hashes[`${kind} goods`] = hashOf(...Object.values(apart.goods))
   hashes[`${kind} languages`] = hashOf(...Object.values(apart.languages))
   hashes[`${kind} names`] = hashOf(...Object.values(apart.names))
+  hashes[`${kind} aliases`] = hashOf(...Object.values(apart.aliases))
   const history = unpackHistory(pack.buffer.slice(pack.byteOffset, pack.byteOffset + pack.byteLength))
   if (!history) {
     fail(`${kind} history: its pack does not read`)
@@ -343,9 +349,21 @@ for (const kind of ['torus', 'sphere']) {
   if (!names) fail(`${kind} names: the pack holds none`)
   else {
     const l = lt
-    const book = new wasm.PlaceNames(l.peopleLanguage, l.parent, l.level, l.people, l.from, l.at, l.until, l.seed, l.style, l.changeStart, l.changeYear, l.change, l.changeChoice, l.wordStart, l.wordYear, l.wordMeaning, names.kind, names.place, names.cell, names.namer, names.year, names.pattern, names.meaning, names.ownLength, names.own)
+    const x = history.aliases
+    if (!x) fail(`${kind} other names: the pack holds none`)
+    const book = new wasm.PlaceNames(l.peopleLanguage, l.parent, l.level, l.people, l.from, l.at, l.until, l.seed, l.style, l.changeStart, l.changeYear, l.change, l.changeChoice, l.wordStart, l.wordYear, l.wordMeaning, names.kind, names.place, names.cell, names.namer, names.year, names.pattern, names.meaning, names.ownLength, names.own, x.name, x.how, x.namer, x.year, x.pattern, x.meaning, x.length, x.sounds)
     const atEnd = JSON.parse(book.at(history.end, 0, book.count()))
+    const others = JSON.parse(book.others(0, book.count()))
     book.free()
+    // THE OTHER NAMES: the places taken (a chain of two or more), the
+    // exonyms; each read back, none empty.
+    const how = [...x.how]
+    const taken = others.filter((o) => o.chain.length > 1).length
+    const exonyms = others.reduce((s, o) => s + o.exonyms.length, 0)
+    if (others.some((o) => o.chain.some((e) => e[3] === '') || o.exonyms.some((e) => e[3].length === 0))) fail(`${kind} other names: a name is empty`)
+    if (taken > 0) seen.add('oldNames')
+    if (exonyms > 0) seen.add('exonyms')
+    console.log(`incubator: ${kind} — other names: ${taken} places taken (${how.filter((h) => h === 1).length} kept, ${how.filter((h) => h === 0).length} renamed), ${exonyms} exonyms (${how.filter((h) => h === 2).length} borrowed, ${how.filter((h) => h === 3).length} translated, ${how.filter((h) => h === 4).length} own) in ${apart.aliasBytes} bytes`)
     const villageCount = history.lifeways.villages.villageFrom.length
     const villageNames = [...names.kind].filter((k) => k === 0).length
     const byKind = ['villages', 'rivers', 'mountains', 'lakes', 'landmasses'].map((k, i) => `${[...names.kind].filter((x) => x === i).length} ${k}`).join(', ')
@@ -389,6 +407,7 @@ for (const kind of ['torus', 'sphere']) {
     goods: hashOf(...Object.values(tailApart(natPack).goods)),
     languages: hashOf(...Object.values(tailApart(natPack).languages)),
     names: hashOf(...Object.values(tailApart(natPack).names)),
+    aliases: hashOf(...Object.values(tailApart(natPack).aliases)),
     peoples: peoplesHash(unpackHistory(natPack.buffer.slice(natPack.byteOffset, natPack.byteOffset + natPack.byteLength))),
     settlement: hashOf(natSettled),
   }
@@ -402,7 +421,7 @@ for (const kind of ['torus', 'sphere']) {
     if (wasmOther !== natOther) fail(`${kind} controls: the native build's history differs from the WASM's`)
     if (wasmOther === hashOf(pack)) fail(`${kind} controls: the history does not change with them`)
   }
-  if (golden) for (const part of ['habitat', 'flora', 'fauna', 'history', 'peoples', 'settlement', 'goods', 'languages', 'names']) {
+  if (golden) for (const part of ['habitat', 'flora', 'fauna', 'history', 'peoples', 'settlement', 'goods', 'languages', 'names', 'aliases']) {
     const key = `${kind} ${part}`
     if (golden[key] !== hashes[key]) fail(`${key}: not the reference's (${hashes[key].slice(0, 12)} against ${String(golden[key]).slice(0, 12)})`)
   }
@@ -452,7 +471,11 @@ for (const kind of ['torus', 'sphere']) {
 // languages.rs `the_tree_has_families_languages_and_dialects`.
 // THE NAMES (TEG-139, 2026-10-31): the villages named ('names'). Also in
 // place_names.rs `every_place_has_a_name_that_reads_back_and_wears_down`.
-const reaches = ['departure', 'trade', 'crossing', 'centre 3', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleSplit', 'peopleMerged', 'peopleReplaced', 'peopleGone', 'peopleFarmers', 'goods', 'languages', 'languageArises', 'names']
+// THE OTHER NAMES (TEG-142, TEG-143, 2026-10-31): a place another people
+// took ('oldNames'), a place a neighbour named ('exonyms'). Also in
+// name_contact.rs
+// `taken_places_keep_or_change_their_names_and_neighbours_name_them`.
+const reaches = ['departure', 'trade', 'crossing', 'centre 3', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleSplit', 'peopleMerged', 'peopleReplaced', 'peopleGone', 'peopleFarmers', 'goods', 'languages', 'languageArises', 'names', 'oldNames', 'exonyms']
 for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
 // The languages (language/mod.rs, TEG-137): no world, no reference yet —
 // the crate's own tests keep a fixed seed's names. The native build must

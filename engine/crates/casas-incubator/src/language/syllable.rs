@@ -80,7 +80,7 @@ fn s(kit: &Kit, p: Phoneme) -> &Sound {
 }
 
 // True when j stands before an i, or w before a u (by quality).
-fn glide_same_vowel(kit: &Kit, glide: Phoneme, vowel: Phoneme) -> bool {
+pub(super) fn glide_same_vowel(kit: &Kit, glide: Phoneme, vowel: Phoneme) -> bool {
     let (g, v) = (s(kit, glide), s(kit, vowel));
     (g.id == "j" && v.height == "close" && v.backness == "front" && !v.rounded)
         || (g.id == "w" && v.height == "close" && v.backness == "back" && v.rounded)
@@ -345,7 +345,19 @@ impl Phonotactics {
                 return false;
             }
         }
-        // reach[k]: the first k sounds are whole syllables.
+        self.reached(kit, word)[word.len()]
+    }
+
+    /// The most sounds from the word's start that are whole syllables of
+    /// the language's forms (the other rules of `pronounceable` not
+    /// tested): where a word stops fitting (a loan, language/loan.rs).
+    pub fn reach(&self, kit: &Kit, word: &[Phoneme]) -> usize {
+        let reach = self.reached(kit, word);
+        (0..reach.len()).rev().find(|&k| reach[k]).unwrap_or(0)
+    }
+
+    // reach[k]: the first k sounds are whole syllables.
+    fn reached(&self, kit: &Kit, word: &[Phoneme]) -> Vec<bool> {
         let n = word.len();
         let mut reach = vec![false; n + 1];
         reach[0] = true;
@@ -359,7 +371,7 @@ impl Phonotactics {
                 }
             }
         }
-        reach[n]
+        reach
     }
 
     // The end of a syllable of form f from pos, if one fits there.

@@ -9,8 +9,8 @@
 //! `dist/incubator/` (constants.json, version.json).
 
 use crate::{
-    climate_history, eruptions, habitat, language, languages, log, niche, peoples, peopling,
-    place_names, settle, simulation, travel,
+    climate_history, eruptions, habitat, language, languages, log, name_contact, niche, peoples,
+    peopling, place_names, settle, simulation, travel,
 };
 use serde_json::{Map, Value, json};
 
@@ -90,7 +90,11 @@ use serde_json::{Map, Value, json};
 /// constants are part of the version; the names of the places as recipes
 /// (place_names.rs, TEG-139, 2026-10-31): the villages, the rivers, the
 /// mountains, the lakes and the landmasses named by their peoples, packed
-/// after the languages (the other arrays and the log the same bytes).
+/// after the languages (the other arrays and the log the same bytes); the
+/// other names (name_contact.rs, TEG-142, TEG-143, 2026-10-31): the old
+/// names where another people took a place (kept as a loan or renamed)
+/// and the exonyms between the peoples in contact at the end, packed
+/// after the names (the other arrays and the log the same bytes).
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
@@ -180,7 +184,7 @@ pub fn constants() -> Value {
         )),
         "language": object(table!(language:
             LEXICON_SHARE, HOMOPHONE_TRIES, IMPLICATION_ROUNDS, WORD_LENGTH_SHIFT, WORD_LENGTH_SHORT, WORD_LENGTH_LONG,
-            JOINER_ALWAYS, PEOPLE_PREFIX, ENDING_TRIES,
+            JOINER_ALWAYS, PEOPLE_PREFIX, ENDING_TRIES, FIT_STEPS,
         )),
         "languages": object(table!(languages:
             LANGUAGE_APART_YEARS, LANGUAGE_SHARE, CENTURY_YEARS, SOUND_CHANGE_CHANCE, WORD_LOSS_CHANCE, CHANGE_TRIES,
@@ -189,7 +193,13 @@ pub fn constants() -> Value {
         "names": object(table!(place_names:
             RIVER_LEAST_CELLS, LAKE_LEAST_CELLS, MOUNTAIN_LEAST_M, MOUNTAIN_LEAST_CELLS, MOUNTAINS_A_LANDMASS,
             LANDMASS_LEAST_KM2, HILL_SLOPE, HIGH_M, SNOW_M, BIG_RIVER_SIZE, BIG_LAKE_CELLS, BIG_LANDMASS_KM2,
-            MARKET_PEOPLE, NAME_TRIES,
+            MARKET_PEOPLE, NAME_TRIES, BOOK_SPEECHES,
+        )),
+        "contact": object(table!(name_contact:
+            TAKING_HOLD_YEARS, KEEP_RIVER, KEEP_LANDMASS, KEEP_TOWN, KEEP_LAKE, KEEP_MOUNTAIN, KEEP_VILLAGE,
+            KEEP_TOWN_PEOPLE, HEAD_AGAIN, CONTACT_BORDER_KM, CONTACT_LINKS, CONTACT_FAR_DAYS, BORROW_NEAR,
+            BORROW_FAR, TRANSLATE_SHARE, EXONYM_VILLAGES, EXONYM_RIVERS, EXONYM_MOUNTAINS, EXONYM_LAKES,
+            EXONYM_LANDMASSES,
         )),
         "settle": object(table!(settle:
             CARRYING_FULL, DENSITY_TAU, FORAGER_WEIGHT, LINKS, LINK_DAYS, SOURCE_RICH, SOURCE_DAYS,
@@ -305,8 +315,18 @@ mod tests {
         "SERIES",
         "BOOLS",
         "ALL",
-        // The packed names' mark of an empty slot (place_names.rs).
+        // The packed names' mark of an empty slot, the codes of how a name
+        // came, of a loan and between its words (place_names.rs).
         "NO_MEANING",
+        "FIRST",
+        "RENAMED",
+        "KEPT",
+        "BORROWED",
+        "TRANSLATED",
+        "OWN",
+        "SET",
+        "LOAN",
+        "WORD_BREAK",
     ];
 
     // Every constant of the modules is in the table or is format: one
@@ -330,11 +350,13 @@ mod tests {
             ("pack", include_str!("pack.rs")),
             ("languages", include_str!("languages.rs")),
             ("names", include_str!("place_names.rs")),
+            ("contact", include_str!("name_contact.rs")),
             ("language", include_str!("language/mod.rs")),
             ("language", include_str!("language/change.rs")),
             ("language", include_str!("language/draw.rs")),
             ("language", include_str!("language/inventory.rs")),
             ("language", include_str!("language/kit.rs")),
+            ("language", include_str!("language/loan.rs")),
             ("language", include_str!("language/names.rs")),
             ("language", include_str!("language/notation.rs")),
             ("language", include_str!("language/spelling.rs")),

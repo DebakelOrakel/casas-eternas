@@ -189,3 +189,22 @@ kept as recipes (some 60 to 220 KB a world), the forms in a year derived
 through the namer's line's sound changes. The slot X (a near place's
 name) is not drawn: it is an exonym. The chronicle names the landmasses,
 the window lists the names of a language.
+2026-10-31: the contact is built (TEG-142, TEG-143,
+`engine/crates/casas-incubator/src/name_contact.rs`, the loan in
+`language/loan.rs`), with the history (H1). OLD NAMES: where the people
+of a place comes to speak another language and holds it 1 000 years
+(the waves, a merge, the fields' replacement), the newcomers keep the
+name by a chance by kind (rivers 75 %, landmasses 60 %, towns 50 %,
+lakes 40 %, mountains 35 %, villages 10 %) as a loan (the old form of
+that year, each sound to its nearest of their sounds, what their
+syllable rules forbid dropped; then their sound changes), with their
+word for the kind added by 30 % ("River Avon"); else they rename it.
+EXONYMS: between the peoples in contact at the end (a border, the far
+trade's links), each language names the other's important places (the
+landmasses, the largest villages, rivers, lakes, mountains; at most 22 a
+pair of languages): borrowed (20 % far to 80 % near, by the border, the
+links and the ways' days between the hearts), else translated (half)
+where it has the words, else a name of its own. Kept as entries after the
+names (some 40 to 130 KB a world on the v15 worlds); the window shows a
+name's older names and its exonyms. Names the user sets (fork 4) have a
+place in the format, not built. Loans of ordinary words are not built.

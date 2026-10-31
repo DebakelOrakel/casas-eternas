@@ -27,6 +27,15 @@
 //    build (engine/dist/casas-incubator.node) gives the WASM's names, bit
 //    for bit; the view lists each name under its namer and the nodes above
 //    it, by the time; the search finds a name.
+// 6. The other names (TEG-142, TEG-143, the crate's name_contact.rs): on
+//    the places of 5., a third taken by a people of another family that
+//    holds them to the end, and some pairs of peoples of two families in
+//    contact: the taken places keep their name as a loan or
+//    are renamed, the peoples in contact name each other's places; the
+//    native build gives the WASM's, bit for bit; every loan is in its
+//    borrower's sounds of its year, and its syllable rules allow it; the
+//    view lists a taken name under its new namer from the taking on, with
+//    its older name, and its exonyms.
 import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -334,7 +343,22 @@ for (const seed of [1, 7, 2840]) {
     peoples.push(p)
     years.push(tree.born[p])
   }
-  const args = [tree.parent, tree.group, Float64Array.from(tree.born), Float64Array.from(tree.ended), tree.mergedInto, tree.big, x.share, x.replaced, x.heart, x.heartApart, seed, made.start, made.end, Uint8Array.from(kinds), Int32Array.from(peoples), Float64Array.from(years)]
+  // 6. A third of the places taken by a people of another family, a third
+  // of the way from its year to the end (at a tree step), and held to the
+  // end; peoples of two families in contact.
+  const living = [...tree.parent.keys()]
+  const held = { place: [], year: [], people: [] }
+  for (let j = 0; j < kinds.length; j += 3) {
+    const at = Math.round((years[j] + (made.end - years[j]) / 3) / 500) * 500
+    const by = living.find((q) => tree.group[q] !== tree.group[peoples[j]] && tree.born[q] <= at)
+    if (by === undefined || made.end - at < 1000 || at <= years[j]) continue
+    held.place.push(j, j)
+    held.year.push(years[j], at)
+    held.people.push(peoples[j], by)
+  }
+  const contacts = []
+  for (const a of living) for (const b of living) if (a < b && tree.group[a] !== tree.group[b] && contacts.length < 5 * 12) contacts.push(a, b, 200 + 100 * (a % 9), 5 + (b % 30), a % 4)
+  const args = [tree.parent, tree.group, Float64Array.from(tree.born), Float64Array.from(tree.ended), tree.mergedInto, tree.big, x.share, x.replaced, x.heart, x.heartApart, seed, made.start, made.end, Uint8Array.from(kinds), Int32Array.from(peoples), Float64Array.from(years), Int32Array.from(held.place), Float64Array.from(held.year), Int32Array.from(held.people), Float64Array.from(contacts)]
   const fromWasm = wasm.namesOfPlaces(...args)
   const fromNative = native.namesOfPlaces(...args)
   check(`seed ${seed}: the native build gives the WASM's names`, fromWasm === fromNative)
@@ -350,7 +374,8 @@ for (const seed of [1, 7, 2840]) {
   const names = {
     kind: Uint8Array.from(a.nameKind), town: new Uint8Array(a.nameKind.length), place: Int32Array.from(a.namePlace), cell: Int32Array.from(a.nameCell),
     namer: Uint16Array.from(a.nameNamer), year: Float32Array.from(a.nameYear),
-    forms: out.forms.map((list) => ({ years: list.filter((_, k) => k % 2 === 0), forms: list.filter((_, k) => k % 2 === 1) })),
+    forms: out.forms.map(M.view.formsOf),
+    ...M.view.otherNamesOf(out.others),
   }
   const log = [...made.log, ...events].sort((p, q) => p.at - q.at)
   const view = M.view.deriveLanguageView({ ...made, log, languages: { ...languages, names } })
@@ -364,6 +389,40 @@ for (const seed of [1, 7, 2840]) {
   const row = view.names(families[0].id, 0, 1)
   const word = row.rows[0]?.name.toLowerCase().slice(0, 4) ?? ''
   check(`seed ${seed}: the search finds a name's node ("${word}")`, word !== '' && view.namesFound(word, made.end).has(row.rows[0].language))
+
+  // 6. the other names.
+  const HOW = M.pack.NAME_HOW
+  const count = (h) => a.aliasHow.filter((x) => x === HOW.indexOf(h)).length
+  const takings = held.place.length / 2
+  check(`seed ${seed}: every place taken has a later name (${count('kept')} kept, ${count('renamed')} renamed of ${takings})`, count('kept') + count('renamed') === takings && count('kept') > 0 && count('renamed') > 0)
+  const exonyms = count('borrowed') + count('translated') + count('own')
+  check(`seed ${seed}: the peoples in contact name each other's places (${count('borrowed')} borrowed, ${count('translated')} translated, ${count('own')} own)`, exonyms > 0 && count('borrowed') > 0)
+  const loans = out.loans
+  const inSounds = loans.filter((l) => l.sounds.flat().every((p) => l.inventory.includes(p))).length
+  const fits = loans.filter((l) => l.fits.every(Boolean)).length
+  check(`seed ${seed}: every loan is in its borrower's sounds (${inSounds} of ${loans.length}), its syllable rules allow it (${fits})`, loans.length > 0 && inSounds === loans.length && fits === loans.length)
+  // A taken place: under its new namer from the taking on, its older name.
+  const taken = [...names.chain.keys()].find((j) => names.chain[j].length > 1 && KINDS[names.kind[j]] !== 'landmass')
+  const [first, later] = names.chain[taken]
+  const familyOf = (node) => {
+    let at = view.nodes.find((n) => n.id === node)
+    while (at && at.parent !== null) at = view.nodes.find((n) => n.id === at.parent)
+    return at
+  }
+  const rowsAt = (year) => families.flatMap((f) => view.names(f.id, 0, 1e6, year).rows).filter((r) => r.cell === names.cell[taken])
+  const before = rowsAt(later.year - 1)
+  const after = rowsAt(later.year)
+  check(`seed ${seed}: a taken name moves to its new namer's family, with its older name ("${before[0]?.name}" → "${after[0]?.name}" ← "${after[0]?.older?.[0]?.name}")`, before.length === 1 && after.length === 1 && familyOf(before[0].language) !== familyOf(after[0].language) && after[0].older?.[0]?.name === first.form && after[0].name === M.view.nameAt(names, taken, later.year))
+  const withExonym = [...names.exonyms.keys()].find((j) => names.exonyms[j].length > 0 && KINDS[names.kind[j]] !== 'landmass')
+  const shown = withExonym === undefined ? [] : families.flatMap((f) => view.names(f.id, 0, 1e6).rows).filter((r) => r.cell === names.cell[withExonym])
+  check(`seed ${seed}: a name lists its exonyms (${shown[0]?.exonyms?.map((e) => e.name).join(', ')})`, shown.length === 1 && shown[0].exonyms?.length === names.exonyms[withExonym].length)
+  // The book's place(): the current name, the older ones and the exonyms.
+  const l = languages.tree
+  const book = new wasm.PlaceNames(l.peopleLanguage, l.parent, l.level, l.people, l.from, l.at, l.until, l.seed, l.style, l.changeStart, l.changeYear, l.change, l.changeChoice, l.wordStart, l.wordYear, l.wordMeaning, names.kind, names.place, names.cell, names.namer, names.year, Uint8Array.from(a.namePattern), Uint8Array.from(a.nameMeaning), Uint8Array.from(a.nameOwnLength), Uint8Array.from(a.nameOwn), Int32Array.from(a.aliasName), Uint8Array.from(a.aliasHow), Uint16Array.from(a.aliasNamer), Float32Array.from(a.aliasYear), Uint8Array.from(a.aliasPattern), Uint8Array.from(a.aliasMeaning), Uint8Array.from(a.aliasLength), Uint8Array.from(a.aliasSounds))
+  const place = JSON.parse(book.place(taken, made.end))
+  book.free()
+  check(`seed ${seed}: the book gives a place's name, its older names and its exonyms`, place.name === M.view.nameAt(names, taken, made.end) && place.older.length === names.chain[taken].length - 1 && place.older[0][0] === first.form)
+  console.log(`  seed ${seed}: e.g. ${names.chain[taken].map((e) => `"${e.form}" (${HOW[e.how] ?? 'first'})`).join(' → ')}`)
 }
 
 await server.close()

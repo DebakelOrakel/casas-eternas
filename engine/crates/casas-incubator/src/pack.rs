@@ -83,6 +83,21 @@
 //! `nameOwnLength` u8 and `nameOwn` u8 (the sounds of its word of its own,
 //! `W`, the kit's table's index, one name's after the other's). The
 //! letters are not kept: they follow from the tree (`NameBook`).
+//!
+//! THE OTHER NAMES (since v6, 2026-10-31, TEG-142, TEG-143;
+//! name_contact.rs, place_names.rs `Aliases`), after the names, which keep
+//! their bytes; a reader that does not know them passes over them. By
+//! entry, a name's entries one after the other in the names' order, its
+//! chain (the names the peoples that took it gave) in the order of their
+//! years, then its exonyms: `aliasName` i32 (the name, of `name…`),
+//! `aliasHow` u8 (0 renamed, 1 kept, 2 borrowed, 3 translated, 4 a
+//! name of its own; place_names.rs `how`), `aliasNamer` u16 (the node it
+//! is in), `aliasYear` f32 (years), `aliasPattern` u8 (a recipe's pattern
+//! as `namePattern`; 255 for a loan), `aliasMeaning` u8 (two an entry: a
+//! recipe's as `nameMeaning`; a loan's word for its kind, 255 for none,
+//! and 1 where that word stands first), `aliasLength` u8 and
+//! `aliasSounds` u8 (a recipe's word of its own; a loan's words as
+//! sounds, 255 between two).
 
 use crate::log::Json;
 use crate::simulation::SimulationResult;
@@ -455,7 +470,8 @@ fn push_languages(r: &SimulationResult, arrays: &mut Vec<(String, Array)>) {
     ]);
 }
 
-// THE NAMES' arrays (see the module's head), after the languages.
+// THE NAMES' arrays (see the module's head), after the languages; THE
+// OTHER NAMES' after them.
 fn push_names<'a>(r: &'a SimulationResult, arrays: &mut Vec<(String, Array<'a>)>) {
     let n = &r.names;
     arrays.extend([
@@ -468,6 +484,17 @@ fn push_names<'a>(r: &'a SimulationResult, arrays: &mut Vec<(String, Array<'a>)>
         ("nameMeaning".into(), Array::U8(&n.meaning)),
         ("nameOwnLength".into(), Array::U8(&n.own_length)),
         ("nameOwn".into(), Array::U8(&n.own)),
+    ]);
+    let a = &r.aliases;
+    arrays.extend([
+        ("aliasName".into(), Array::I32(&a.name)),
+        ("aliasHow".into(), Array::U8(&a.how)),
+        ("aliasNamer".into(), Array::U16(&a.namer)),
+        ("aliasYear".into(), Array::F32(&a.year)),
+        ("aliasPattern".into(), Array::U8(&a.pattern)),
+        ("aliasMeaning".into(), Array::U8(&a.meaning)),
+        ("aliasLength".into(), Array::U8(&a.length)),
+        ("aliasSounds".into(), Array::U8(&a.sounds)),
     ]);
 }
 

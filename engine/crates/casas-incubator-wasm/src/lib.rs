@@ -13,7 +13,7 @@ use casas_incubator::languages::{Languages, Packed, PeopleInput, tree_json};
 use casas_incubator::log::LogEvent;
 use casas_incubator::pack::{pack_history, pack_settled};
 use casas_incubator::peopling::{Controls, Peopling, people};
-use casas_incubator::place_names::{NameBook, Names, names_of_places_json};
+use casas_incubator::place_names::{Aliases, NameBook, Names, names_of_places_json};
 use casas_incubator::settle::settle_history;
 use casas_incubator::simulation::{SPAN_YEARS, STEP_YEARS, SimulationResult, ice_distance};
 use wasm_bindgen::prelude::*;
@@ -144,7 +144,10 @@ pub fn languages_of_peoples(
 /// THE NAMES of places over a tree of peoples given as arrays (the
 /// arrays of `languagesOfPeoples`; then by place its kind, its namer and
 /// its year): the packed names, each at `end`, each over time, as JSON
-/// (casas_incubator::place_names `names_of_places_json`). For the
+/// (casas_incubator::place_names `names_of_places_json`); by row of
+/// `heldPlace`, `heldYear`, `heldPeople` a place's people after its name
+/// (a taking), and `contacts` five numbers a contact (two peoples, the
+/// border km, the days, the links): the other names too. For the
 /// languages harness, which makes its peoples and places itself.
 #[wasm_bindgen(js_name = namesOfPlaces)]
 #[allow(clippy::too_many_arguments)]
@@ -165,6 +168,10 @@ pub fn names_of_places(
     kinds: &[u8],
     people: &[i32],
     years: &[f64],
+    held_place: &[i32],
+    held_year: &[f64],
+    held_people: &[i32],
+    contacts: &[f64],
 ) -> String {
     let peoples: Vec<PeopleInput> = (0..parent.len())
         .map(|p| PeopleInput {
@@ -180,7 +187,19 @@ pub fn names_of_places(
             heart_apart: heart_apart[p],
         })
         .collect();
-    names_of_places_json(&peoples, seed, start, end, kinds, people, years)
+    names_of_places_json(
+        &peoples,
+        seed,
+        start,
+        end,
+        kinds,
+        people,
+        years,
+        held_place,
+        held_year,
+        held_people,
+        contacts,
+    )
 }
 
 /// THE NAMES of a history (place_names.rs, TEG-139): its packed languages'
@@ -223,6 +242,14 @@ impl PlaceNames {
         meaning: &[u8],
         own_length: &[u8],
         own: &[u8],
+        alias_name: &[i32],
+        alias_how: &[u8],
+        alias_namer: &[u16],
+        alias_year: &[f32],
+        alias_pattern: &[u8],
+        alias_meaning: &[u8],
+        alias_length: &[u8],
+        alias_sounds: &[u8],
     ) -> Result<PlaceNames, JsError> {
         let packed = Packed {
             people_language: people_language.to_vec(),
@@ -255,7 +282,17 @@ impl PlaceNames {
             own_length: own_length.to_vec(),
             own: own.to_vec(),
         };
-        let book = NameBook::new(tree, names).map_err(|e| JsError::new(&e))?;
+        let aliases = Aliases {
+            name: alias_name.to_vec(),
+            how: alias_how.to_vec(),
+            namer: alias_namer.to_vec(),
+            year: alias_year.to_vec(),
+            pattern: alias_pattern.to_vec(),
+            meaning: alias_meaning.to_vec(),
+            length: alias_length.to_vec(),
+            sounds: alias_sounds.to_vec(),
+        };
+        let book = NameBook::new(tree, names, aliases).map_err(|e| JsError::new(&e))?;
         Ok(PlaceNames { book })
     }
 
@@ -274,6 +311,20 @@ impl PlaceNames {
     /// [year, form, year, form …], the year from which each form holds.
     pub fn forms(&mut self, from: usize, count: usize) -> String {
         self.book.forms_json(from, count)
+    }
+
+    /// The other names of names `from` .. `from + count`, JSON: by name
+    /// {"chain": [[how, namer, year, form] …], "exonyms": [[how, namer,
+    /// year, [year, form, …]] …]} (`NameBook::others_json`).
+    pub fn others(&mut self, from: usize, count: usize) -> String {
+        self.book.others_json(from, count)
+    }
+
+    /// Name `j` in `year`: its form, its namer, its older names and its
+    /// exonyms by then, JSON (`NameBook::place_json`); null before it was
+    /// given.
+    pub fn place(&mut self, j: usize, year: f64) -> String {
+        self.book.place_json(j, year)
     }
 }
 

@@ -57,15 +57,20 @@
 //! meanings does not change it (Eoforwic → York). A change that leaves a
 //! word no vowel leaves the word as it was.
 //!
-//! Each place has its namer's name only: the old names after a
-//! replacement (TEG-143) and the names of the neighbours (TEG-142) come
-//! later.
+//! THE OTHER NAMES (since TEG-142 and TEG-143, `Aliases`; given in
+//! name_contact.rs): a place's later names, where another people took it
+//! (an old name kept as a loan, or a new name), and the names its
+//! neighbours give it (exonyms). A name's entries are read alike
+//! (`Entry`): a recipe, or a loan (sounds, and the word for its kind).
+//! The current name in a year is the last entry of the place's chain
+//! given by then.
 
 use crate::habitat::Habitat;
 use crate::language::{
     Kind, NameRecipe, Phoneme, Slot, Word, apply_change, capitalise, changes, kit, mix,
 };
 use crate::languages::{Cache, Dated, Languages, Level};
+use crate::name_contact::{Contact, give_aliases};
 use crate::simulation::lifeway;
 use casas_generator::climate::biomes::biome;
 use serde_json::{Value, json};
@@ -112,7 +117,12 @@ pub const NO_MEANING: u8 = 255;
 /// A place to name: its kind, what it is (a village's index, a river's
 /// line, a mountain's highest cell, a lake's first cell, a landmass's id),
 /// its cell, its namer (a people id, -1 for none), the year, and what is
-/// there (meanings.json ids).
+/// there (meanings.json ids). For THE OTHER NAMES (name_contact.rs): its
+/// size (a village's town at the end, people, 0 for none; a river's and a
+/// lake's cells; a mountain's height, m; a landmass's km²), its last year
+/// (a village's left; Infinity), its people over time (the people of the
+/// cell its namer was first seen in, at each tree step it changed:
+/// [year, people id]) and its people at the end (-1 for none).
 #[derive(Clone, Debug)]
 pub struct Place {
     pub kind: Kind,
@@ -121,6 +131,10 @@ pub struct Place {
     pub people: i32,
     pub year: f64,
     pub context: Vec<&'static str>,
+    pub size: f64,
+    pub until: f64,
+    pub held: Vec<(f32, i32)>,
+    pub end_people: i32,
 }
 
 /// The names as packed (pack.rs `name…`), by name; `meaning` two a name
@@ -140,12 +154,12 @@ pub struct Names {
 }
 
 // The salt of a place's name: its kind and its place.
-fn salt_of(kind: Kind, place: i32) -> u32 {
+pub(crate) fn salt_of(kind: Kind, place: i32) -> u32 {
     mix(((kind as u32) << 28) ^ (place as u32 & 0x0fff_ffff))
 }
 
 /// By people its own language's node and its dialect's, -1 for none.
-fn own_nodes(tree: &Languages) -> (Vec<i32>, Vec<i32>) {
+pub(crate) fn own_nodes(tree: &Languages) -> (Vec<i32>, Vec<i32>) {
     let n = tree.of_people.len();
     let (mut own, mut dialect) = (vec![-1i32; n], vec![-1i32; n]);
     for (k, node) in tree.nodes.iter().enumerate() {
@@ -164,7 +178,7 @@ fn own_nodes(tree: &Languages) -> (Vec<i32>, Vec<i32>) {
 /// The node people `p` speaks in year `t` (languages.rs: before its own
 /// language arises, the language it came from; then its dialect, or its
 /// language). -1 for a people of no node.
-fn speaks_at(tree: &Languages, own: &[i32], dialect: &[i32], p: usize, t: f64) -> i32 {
+pub(crate) fn speaks_at(tree: &Languages, own: &[i32], dialect: &[i32], p: usize, t: f64) -> i32 {
     if p >= tree.of_people.len() {
         return -1;
     }
@@ -215,24 +229,105 @@ pub fn line_changes(tree: &Languages, k: usize, a: f64, b: f64) -> Vec<Dated> {
     out.into_iter().map(|(_, d)| d).collect()
 }
 
+/// A place's namer: the node its people speaks in its year (as packed, in
+/// f32), and the year; None where it has no people or its people speaks
+/// no node. The names are the places that have one, in their order.
+pub(crate) fn namer_of(
+    tree: &Languages,
+    own: &[i32],
+    dialect: &[i32],
+    place: &Place,
+) -> Option<(usize, f64)> {
+    if place.people < 0 {
+        return None;
+    }
+    let year = place.year as f32 as f64;
+    let k = speaks_at(tree, own, dialect, place.people as usize, year);
+    if k < 0 || k as usize >= tree.nodes.len() || k > u16::MAX as i32 {
+        return None;
+    }
+    Some((k as usize, year))
+}
+
+/// A recipe as packed: its pattern's index in its kind's list, the
+/// meanings of its slots H, A, N (NO_MEANING for none), the sounds of its
+/// word of its own.
+pub(crate) fn encode(recipe: &NameRecipe) -> (u8, [u8; 2], Vec<Phoneme>) {
+    let patterns = &kit().patterns.patterns[recipe.kind.id()];
+    let pattern = patterns
+        .iter()
+        .position(|p| p.id == recipe.pattern)
+        .expect("the recipe's pattern");
+    let mut slot_meanings = [NO_MEANING; 2];
+    let mut m = 0;
+    let mut own_sounds: Vec<Phoneme> = Vec::new();
+    for slot in &recipe.slots {
+        match slot {
+            Slot::Head(id) | Slot::Adjective(id) | Slot::Noun(id) => {
+                slot_meanings[m] = meaning_index(id);
+                m += 1;
+            }
+            Slot::Own(sounds) => own_sounds = sounds.clone(),
+            Slot::Ending => {}
+        }
+    }
+    (pattern as u8, slot_meanings, own_sounds)
+}
+
+/// A meaning's index in meanings.json.
+pub(crate) fn meaning_index(id: &str) -> u8 {
+    kit()
+        .meanings
+        .meanings
+        .iter()
+        .position(|x| x.id == id)
+        .expect("a meaning of the kit") as u8
+}
+
+/// The recipe of a packed one (`encode`).
+pub(crate) fn recipe_of(kind: Kind, pattern: u8, meaning: [u8; 2], own: &[Phoneme]) -> NameRecipe {
+    let pattern = &kit().patterns.patterns[kind.id()][pattern as usize];
+    let meanings = &kit().meanings.meanings;
+    let mut m = 0;
+    let mut next = || {
+        let id = meaning[m.min(1)];
+        m += 1;
+        if id == NO_MEANING {
+            String::new()
+        } else {
+            meanings[id as usize].id.clone()
+        }
+    };
+    let slots = pattern
+        .form
+        .chars()
+        .filter(|c| c.is_ascii_uppercase())
+        .map(|c| match c {
+            'H' => Slot::Head(next()),
+            'A' => Slot::Adjective(next()),
+            'N' => Slot::Noun(next()),
+            'W' => Slot::Own(own.to_vec()),
+            _ => Slot::Ending,
+        })
+        .collect();
+    NameRecipe {
+        kind,
+        pattern: pattern.id.clone(),
+        slots,
+    }
+}
+
 impl Names {
     /// The names of the places, each in the speech of its namer at its
     /// year; a place with no namer, or whose namer speaks no node, has
     /// none.
     pub fn give(tree: &Languages, places: &[Place]) -> Names {
         let (own, dialect) = own_nodes(tree);
-        let meanings = &kit().meanings.meanings;
         let mut given: Vec<(usize, usize, f64)> = Vec::new();
         for (j, place) in places.iter().enumerate() {
-            if place.people < 0 {
-                continue;
+            if let Some((k, year)) = namer_of(tree, &own, &dialect, place) {
+                given.push((j, k, year));
             }
-            let year = place.year as f32 as f64;
-            let k = speaks_at(tree, &own, &dialect, place.people as usize, year);
-            if k < 0 || k as usize >= tree.nodes.len() || k > u16::MAX as i32 {
-                continue;
-            }
-            given.push((j, k as usize, year));
         }
         // A node after the other, its speeches forgotten after it: a node's
         // speech at each year is a language.
@@ -274,34 +369,13 @@ impl Names {
         for (g, &(j, k, year)) in given.iter().enumerate() {
             let place = &places[j];
             let recipe = recipes[g].take().expect("a recipe a name");
-            let patterns = &kit().patterns.patterns[place.kind.id()];
-            let pattern = patterns
-                .iter()
-                .position(|p| p.id == recipe.pattern)
-                .expect("the recipe's pattern");
-            let mut slot_meanings = [NO_MEANING; 2];
-            let mut m = 0;
-            let mut own_sounds: &[Phoneme] = &[];
-            for slot in &recipe.slots {
-                match slot {
-                    Slot::Head(id) | Slot::Adjective(id) | Slot::Noun(id) => {
-                        let at = meanings
-                            .iter()
-                            .position(|x| &x.id == id)
-                            .expect("a meaning of the kit");
-                        slot_meanings[m] = at as u8;
-                        m += 1;
-                    }
-                    Slot::Own(sounds) => own_sounds = sounds,
-                    Slot::Ending => {}
-                }
-            }
+            let (pattern, slot_meanings, own_sounds) = encode(&recipe);
             names.kind.push(place.kind as u8);
             names.place.push(place.place);
             names.cell.push(place.cell);
             names.namer.push(k as u16);
             names.year.push(year as f32);
-            names.pattern.push(pattern as u8);
+            names.pattern.push(pattern);
             names.meaning.extend(slot_meanings);
             names.own_length.push(own_sounds.len() as u8);
             names.own.extend(own_sounds.iter().map(|p| p.0));
@@ -357,27 +431,296 @@ impl Names {
     }
 }
 
+/// How a name came (`Entry::how`; packed `aliasHow` for the others).
+pub mod how {
+    /// The place's first name (`Names`), not packed as a code.
+    pub const FIRST: u8 = 255;
+    /// THE OLD NAMES (TEG-143): the people that took the place gave it a
+    /// new name, or kept the name it had as a loan.
+    pub const RENAMED: u8 = 0;
+    pub const KEPT: u8 = 1;
+    /// THE EXONYMS (TEG-142): a neighbour borrowed the name, translated
+    /// it, or gave it a name of its own.
+    pub const BORROWED: u8 = 2;
+    pub const TRANSLATED: u8 = 3;
+    pub const OWN: u8 = 4;
+    /// Kept free for a name the user sets (DEC-0054 fork 4), not built.
+    pub const SET: u8 = 5;
+}
+
+/// The pattern of a loan (`aliasPattern`): not a pattern of the kit.
+pub const LOAN: u8 = 255;
+/// Between two words of a loan (`aliasSounds`): not a sound of the kit.
+pub const WORD_BREAK: u8 = 255;
+/// The speeches made that the book keeps at most; then it forgets them.
+pub const BOOK_SPEECHES: usize = 2048;
+
+/// THE OTHER NAMES as packed (pack.rs `alias…`), by entry, a name's
+/// entries one after the other in the order of the names; a name's chain
+/// (RENAMED, KEPT) in the order of their years, then its exonyms. `name`
+/// the name (of `Names`) it is of, `how` (`how`), `namer` the node it is
+/// in, `year`; `pattern` the recipe's (LOAN for a loan), `meaning` two an
+/// entry (a recipe's slots; a loan's word for its kind, NO_MEANING for
+/// none, and 1 where that word stands first), `length` and `sounds` (a
+/// recipe's word of its own; a loan's words, WORD_BREAK between two).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Aliases {
+    pub name: Vec<i32>,
+    pub how: Vec<u8>,
+    pub namer: Vec<u16>,
+    pub year: Vec<f32>,
+    pub pattern: Vec<u8>,
+    pub meaning: Vec<u8>,
+    pub length: Vec<u8>,
+    pub sounds: Vec<u8>,
+}
+
+/// What an entry says: a recipe, or a loan (its words as sounds and the
+/// word for its kind, by meaning, first or last).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Said {
+    Recipe(NameRecipe),
+    Loan {
+        words: Vec<Vec<Phoneme>>,
+        head: Option<String>,
+        head_first: bool,
+    },
+}
+
+/// A name of a place: how it came, the node it is in, the year, what it
+/// says.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Entry {
+    pub how: u8,
+    pub namer: usize,
+    pub year: f64,
+    pub said: Said,
+}
+
+impl Aliases {
+    pub fn len(&self) -> usize {
+        self.name.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.name.is_empty()
+    }
+
+    /// An entry of name `j` (of kind `kind`) put at the end; the year as
+    /// packed (f32).
+    pub fn push(&mut self, j: usize, e: &Entry) {
+        let (pattern, meaning, sounds) = match &e.said {
+            Said::Recipe(r) => {
+                let (p, m, own) = encode(r);
+                (p, m, own.iter().map(|x| x.0).collect::<Vec<u8>>())
+            }
+            Said::Loan {
+                words,
+                head,
+                head_first,
+            } => {
+                let mut sounds = Vec::new();
+                for (k, w) in words.iter().enumerate() {
+                    if k > 0 {
+                        sounds.push(WORD_BREAK);
+                    }
+                    sounds.extend(w.iter().map(|x| x.0));
+                }
+                let m = head.as_deref().map_or(NO_MEANING, meaning_index);
+                (LOAN, [m, u8::from(*head_first)], sounds)
+            }
+        };
+        self.name.push(j as i32);
+        self.how.push(e.how);
+        self.namer.push(e.namer as u16);
+        self.year.push(e.year as f32);
+        self.pattern.push(pattern);
+        self.meaning.extend(meaning);
+        self.length.push(sounds.len().min(255) as u8);
+        self.sounds.extend(sounds.into_iter().take(255));
+    }
+
+    /// The packed entries checked against `names` and a tree of `nodes`
+    /// nodes: the arrays one an entry (`meaning` two), the names rising,
+    /// every index in its list.
+    pub fn check(&self, names: &Names, nodes: usize) -> Result<(), String> {
+        let n = self.name.len();
+        if [
+            self.how.len(),
+            self.namer.len(),
+            self.year.len(),
+            self.pattern.len(),
+            self.length.len(),
+        ]
+        .iter()
+        .any(|&l| l != n)
+            || self.meaning.len() != 2 * n
+            || self.length.iter().map(|&l| l as usize).sum::<usize>() != self.sounds.len()
+        {
+            return Err("the arrays by alias are not one an alias".into());
+        }
+        let k = kit();
+        for a in 0..n {
+            let j = self.name[a];
+            if j < 0 || j as usize >= names.len() || (a > 0 && j < self.name[a - 1]) {
+                return Err("an alias of no name, or out of the names' order".into());
+            }
+            let kind = Kind::ALL[names.kind[j as usize] as usize];
+            let m = &self.meaning[2 * a..2 * a + 2];
+            let bad_meaning = |x: u8| x != NO_MEANING && x as usize >= k.meanings.meanings.len();
+            let ok = self.how[a] <= how::SET
+                && (self.namer[a] as usize) < nodes
+                && if self.pattern[a] == LOAN {
+                    !bad_meaning(m[0]) && m[1] <= 1
+                } else {
+                    (self.pattern[a] as usize) < k.patterns.patterns[kind.id()].len()
+                        && !m.iter().any(|&x| bad_meaning(x))
+                };
+            if !ok {
+                return Err("an alias's how, namer, pattern or meaning out of its list".into());
+            }
+        }
+        if self
+            .sounds
+            .iter()
+            .any(|&p| p != WORD_BREAK && p as usize >= k.sounds.len())
+        {
+            return Err("a sound out of the kit".into());
+        }
+        Ok(())
+    }
+}
+
+/// The words of an entry as given: in its namer's speech of its year.
+pub fn said_words(tree: &Languages, cache: &mut Cache, e: &Entry) -> Vec<Vec<Phoneme>> {
+    let sp = tree.speech(e.namer, e.year, cache);
+    match &e.said {
+        Said::Recipe(r) => r.words(&sp.lang),
+        Said::Loan {
+            words,
+            head,
+            head_first,
+        } => {
+            let mut out = words.clone();
+            if let Some(w) = head.as_deref().and_then(|m| sp.lang.word(m)) {
+                if *head_first {
+                    out.insert(0, w.to_vec());
+                } else {
+                    out.push(w.to_vec());
+                }
+            }
+            out
+        }
+    }
+}
+
+// An entry's last year: its namer's last, not before its year.
+fn last_year(tree: &Languages, e: &Entry) -> f64 {
+    let until = tree.nodes[e.namer].until;
+    if until > e.year { until } else { e.year }
+}
+
+/// An entry's words in year t (at its year before it, at its namer's last
+/// year after that): as given, then through every sound change of its
+/// namer's line up to then. And that year.
+pub fn words_at(
+    tree: &Languages,
+    cache: &mut Cache,
+    e: &Entry,
+    t: f64,
+) -> (Vec<Vec<Phoneme>>, f64) {
+    let until = last_year(tree, e);
+    let to = t.clamp(e.year, until);
+    let mut words = said_words(tree, cache, e);
+    for d in line_changes(tree, e.namer, e.year, to) {
+        wear(&mut words, &d);
+    }
+    (words, to)
+}
+
+/// The words spelt in node k's spelling of year t.
+pub fn spell_in(
+    tree: &Languages,
+    cache: &mut Cache,
+    k: usize,
+    t: f64,
+    words: &[Vec<Phoneme>],
+) -> String {
+    let sp = tree.speech(k, t, cache);
+    let spelt: Vec<String> = words.iter().map(|w| sp.lang.spell(w)).collect();
+    capitalise(&spelt.join(" "))
+}
+
+/// An entry's form in year t (`words_at`), spelt.
+pub fn form_of(tree: &Languages, cache: &mut Cache, e: &Entry, t: f64) -> String {
+    let (words, to) = words_at(tree, cache, e, t);
+    spell_in(tree, cache, e.namer, to, &words)
+}
+
+/// An entry's forms over time, from its year to before `stop`: the year
+/// from which each form holds and the form, a new one after each sound
+/// change of its namer's line that changes its letters.
+pub fn forms_of(tree: &Languages, cache: &mut Cache, e: &Entry, stop: f64) -> Vec<(f64, String)> {
+    let until = last_year(tree, e);
+    let mut words = said_words(tree, cache, e);
+    let mut out = vec![(e.year, spell_in(tree, cache, e.namer, e.year, &words))];
+    let line = line_changes(tree, e.namer, e.year, until);
+    let mut c = 0;
+    while c < line.len() && line[c].year < stop {
+        let at = line[c].year;
+        while c < line.len() && line[c].year == at {
+            wear(&mut words, &line[c]);
+            c += 1;
+        }
+        let form = spell_in(tree, cache, e.namer, at, &words);
+        if form != out[out.len() - 1].1 {
+            out.push((at, form));
+        }
+    }
+    out
+}
+
 /// The names of a tree and how they read in a year: the recipes, the
-/// tree and the speeches made.
+/// other names, the tree and the speeches made.
 pub struct NameBook {
     pub tree: Languages,
     pub names: Names,
+    pub aliases: Aliases,
     own_start: Vec<usize>,
+    // By alias, where its sounds start; by name, its first alias.
+    sound_start: Vec<usize>,
+    alias_start: Vec<usize>,
     cache: Cache,
 }
 
 impl NameBook {
-    pub fn new(tree: Languages, names: Names) -> Result<NameBook, String> {
+    pub fn new(tree: Languages, names: Names, aliases: Aliases) -> Result<NameBook, String> {
         names.check(tree.nodes.len())?;
+        aliases.check(&names, tree.nodes.len())?;
         let mut own_start = Vec::with_capacity(names.len() + 1);
         own_start.push(0);
         for &l in &names.own_length {
             own_start.push(own_start[own_start.len() - 1] + l as usize);
         }
+        let mut sound_start = Vec::with_capacity(aliases.len() + 1);
+        sound_start.push(0);
+        for &l in &aliases.length {
+            sound_start.push(sound_start[sound_start.len() - 1] + l as usize);
+        }
+        let mut alias_start = vec![0usize; names.len() + 1];
+        for &j in &aliases.name {
+            alias_start[j as usize + 1] += 1;
+        }
+        for j in 0..names.len() {
+            alias_start[j + 1] += alias_start[j];
+        }
         Ok(NameBook {
             tree,
             names,
+            aliases,
             own_start,
+            sound_start,
+            alias_start,
             cache: Cache::default(),
         })
     }
@@ -385,98 +728,106 @@ impl NameBook {
     /// The recipe of name `j`.
     pub fn recipe(&self, j: usize) -> NameRecipe {
         let n = &self.names;
-        let kind = Kind::ALL[n.kind[j] as usize];
-        let pattern = &kit().patterns.patterns[kind.id()][n.pattern[j] as usize];
-        let meanings = &kit().meanings.meanings;
-        let mut m = 0;
-        let mut meaning = || {
-            let id = n.meaning[2 * j + m];
-            m += 1;
-            if id == NO_MEANING {
-                String::new()
-            } else {
-                meanings[id as usize].id.clone()
-            }
-        };
         let own: Vec<Phoneme> = n.own[self.own_start[j]..self.own_start[j + 1]]
             .iter()
             .map(|&p| Phoneme(p))
             .collect();
-        let slots = pattern
-            .form
-            .chars()
-            .filter(|c| c.is_ascii_uppercase())
-            .map(|c| match c {
-                'H' => Slot::Head(meaning()),
-                'A' => Slot::Adjective(meaning()),
-                'N' => Slot::Noun(meaning()),
-                'W' => Slot::Own(own.clone()),
-                _ => Slot::Ending,
-            })
-            .collect();
-        NameRecipe {
-            kind,
-            pattern: pattern.id.clone(),
-            slots,
+        recipe_of(
+            Kind::ALL[n.kind[j] as usize],
+            n.pattern[j],
+            [n.meaning[2 * j], n.meaning[2 * j + 1]],
+            &own,
+        )
+    }
+
+    /// Name j's first name.
+    pub fn first(&self, j: usize) -> Entry {
+        Entry {
+            how: how::FIRST,
+            namer: self.names.namer[j] as usize,
+            year: self.names.year[j] as f64,
+            said: Said::Recipe(self.recipe(j)),
         }
     }
 
-    // Name j's namer, year and last year (its namer's).
-    fn when(&self, j: usize) -> (usize, f64, f64) {
-        let k = self.names.namer[j] as usize;
-        let year = self.names.year[j] as f64;
-        let until = self.tree.nodes[k].until;
-        (k, year, if until > year { until } else { year })
-    }
-
-    // Name j's words as given, as sounds.
-    fn given_words(&mut self, j: usize) -> Vec<Vec<Phoneme>> {
-        let (k, year, _) = self.when(j);
-        let recipe = self.recipe(j);
-        let sp = self.tree.speech(k, year, &mut self.cache);
-        recipe.words(&sp.lang)
-    }
-
-    // The words spelt in node k's spelling of year t.
-    fn spell(&mut self, k: usize, t: f64, words: &[Vec<Phoneme>]) -> String {
-        let sp = self.tree.speech(k, t, &mut self.cache);
-        let spelt: Vec<String> = words.iter().map(|w| sp.lang.spell(w)).collect();
-        capitalise(&spelt.join(" "))
-    }
-
-    /// Name j in year t: None before it was given; after its namer's last
-    /// year, as it was then.
-    pub fn form_at(&mut self, j: usize, t: f64) -> Option<String> {
-        let (k, year, until) = self.when(j);
-        if t < year {
-            return None;
-        }
-        let to = if t < until { t } else { until };
-        let mut words = self.given_words(j);
-        for d in line_changes(&self.tree, k, year, to) {
-            wear(&mut words, &d);
-        }
-        Some(self.spell(k, to, &words))
-    }
-
-    /// Name j's forms over time: from its year, and after each sound
-    /// change of its namer's line that changes its letters, the year from
-    /// which a form holds and the form.
-    pub fn forms(&mut self, j: usize) -> Vec<(f64, String)> {
-        let (k, year, until) = self.when(j);
-        let mut words = self.given_words(j);
-        let mut out = vec![(year, self.spell(k, year, &words))];
-        let line = line_changes(&self.tree, k, year, until);
-        let mut c = 0;
-        while c < line.len() {
-            let at = line[c].year;
-            while c < line.len() && line[c].year == at {
-                wear(&mut words, &line[c]);
-                c += 1;
+    /// Alias a.
+    pub fn alias(&self, a: usize) -> Entry {
+        let x = &self.aliases;
+        let sounds = &x.sounds[self.sound_start[a]..self.sound_start[a + 1]];
+        let kind = Kind::ALL[self.names.kind[x.name[a] as usize] as usize];
+        let meaning = [x.meaning[2 * a], x.meaning[2 * a + 1]];
+        let said = if x.pattern[a] == LOAN {
+            let words = sounds
+                .split(|&p| p == WORD_BREAK)
+                .map(|w| w.iter().map(|&p| Phoneme(p)).collect())
+                .collect();
+            let head = (meaning[0] != NO_MEANING)
+                .then(|| kit().meanings.meanings[meaning[0] as usize].id.clone());
+            Said::Loan {
+                words,
+                head,
+                head_first: meaning[1] == 1,
             }
-            let form = self.spell(k, at, &words);
-            if form != out[out.len() - 1].1 {
-                out.push((at, form));
+        } else {
+            let own: Vec<Phoneme> = sounds.iter().map(|&p| Phoneme(p)).collect();
+            Said::Recipe(recipe_of(kind, x.pattern[a], meaning, &own))
+        };
+        Entry {
+            how: x.how[a],
+            namer: x.namer[a] as usize,
+            year: x.year[a] as f64,
+            said,
+        }
+    }
+
+    /// Name j's chain: its first name, then the names the peoples that
+    /// took it gave (RENAMED, KEPT), in the order of their years.
+    pub fn chain(&self, j: usize) -> Vec<Entry> {
+        let mut out = vec![self.first(j)];
+        for a in self.alias_start[j]..self.alias_start[j + 1] {
+            if matches!(self.aliases.how[a], how::RENAMED | how::KEPT) {
+                out.push(self.alias(a));
+            }
+        }
+        out
+    }
+
+    /// Name j's exonyms, by their namers.
+    pub fn exonyms(&self, j: usize) -> Vec<Entry> {
+        (self.alias_start[j]..self.alias_start[j + 1])
+            .filter(|&a| !matches!(self.aliases.how[a], how::RENAMED | how::KEPT))
+            .map(|a| self.alias(a))
+            .collect()
+    }
+
+    fn trim(&mut self) {
+        if self.cache.speeches_len() > BOOK_SPEECHES {
+            self.cache.forget_speeches();
+        }
+    }
+
+    /// Name j in year t: the entry of its chain current then (the last
+    /// given by then), in its form of then; None before it was given.
+    pub fn form_at(&mut self, j: usize, t: f64) -> Option<String> {
+        let chain = self.chain(j);
+        let e = chain.iter().rev().find(|e| e.year <= t)?;
+        self.trim();
+        Some(form_of(&self.tree, &mut self.cache, e, t))
+    }
+
+    /// Name j's forms over time, through its chain: each entry's from its
+    /// year until the next's year; the year from which a form holds and
+    /// the form.
+    pub fn forms(&mut self, j: usize) -> Vec<(f64, String)> {
+        let chain = self.chain(j);
+        let mut out: Vec<(f64, String)> = Vec::new();
+        for (c, e) in chain.iter().enumerate() {
+            let stop = chain.get(c + 1).map_or(f64::INFINITY, |n| n.year);
+            self.trim();
+            for (y, f) in forms_of(&self.tree, &mut self.cache, e, stop) {
+                if out.last().is_none_or(|l| l.1 != f) {
+                    out.push((y, f));
+                }
             }
         }
         out
@@ -516,14 +867,85 @@ impl NameBook {
         self.cache.forget_speeches();
         Value::Array(out).to_string()
     }
+
+    /// The other names of names `from` .. `from + count`, JSON: by name
+    /// {"chain": [[how, namer, year, form] …], "exonyms": [[how, namer,
+    /// year, [year, form, …]] …]}: its chain from its first name (how
+    /// FIRST), each entry with its form when the next one came (the last
+    /// one's at its namer's last year); its exonyms with their forms over
+    /// time.
+    pub fn others_json(&mut self, from: usize, count: usize) -> String {
+        let to = (from + count).min(self.names.len());
+        let mut out = Vec::with_capacity(to.saturating_sub(from));
+        for j in from.min(to)..to {
+            let chain = self.chain(j);
+            let mut list = Vec::with_capacity(chain.len());
+            for (c, e) in chain.iter().enumerate() {
+                let next = chain.get(c + 1).map_or(f64::INFINITY, |n| n.year);
+                self.trim();
+                let form = form_of(&self.tree, &mut self.cache, e, next);
+                list.push(json!([e.how, e.namer, e.year, form]));
+            }
+            let mut exonyms = Vec::new();
+            for e in self.exonyms(j) {
+                self.trim();
+                let forms: Vec<Value> = forms_of(&self.tree, &mut self.cache, &e, f64::INFINITY)
+                    .into_iter()
+                    .flat_map(|(y, f)| [json!(y), json!(f)])
+                    .collect();
+                exonyms.push(json!([e.how, e.namer, e.year, forms]));
+            }
+            out.push(json!({ "chain": list, "exonyms": exonyms }));
+        }
+        self.cache.forget_speeches();
+        Value::Array(out).to_string()
+    }
+
+    /// Name j in year t with its older names and its exonyms, JSON:
+    /// {"name": its form then, "namer": the node of the current entry,
+    /// "older": [[form, namer, year] …] (the entries before it, each in
+    /// its form when the next came), "exonyms": [[form, namer, how] …]
+    /// (those given by then, in their form of then)}; null before it was
+    /// given.
+    pub fn place_json(&mut self, j: usize, t: f64) -> String {
+        if j >= self.names.len() {
+            return "null".into();
+        }
+        let chain = self.chain(j);
+        let Some(c) = chain.iter().rposition(|e| e.year <= t) else {
+            return "null".into();
+        };
+        self.trim();
+        let name = form_of(&self.tree, &mut self.cache, &chain[c], t);
+        let older: Vec<Value> = (0..c)
+            .map(|i| {
+                let form = form_of(&self.tree, &mut self.cache, &chain[i], chain[i + 1].year);
+                json!([form, chain[i].namer, chain[i].year])
+            })
+            .collect();
+        let exonyms: Vec<Value> = self
+            .exonyms(j)
+            .iter()
+            .filter(|e| e.year <= t)
+            .map(|e| json!([form_of(&self.tree, &mut self.cache, e, t), e.namer, e.how]))
+            .collect();
+        json!({ "name": name, "namer": chain[c].namer, "older": older, "exonyms": exonyms })
+            .to_string()
+    }
 }
 
 /// The names of places over a tree of peoples given as arrays (the
 /// languages harness, client/scripts/languageView.mjs, through the WASM
 /// and the native builds): the place j of kind `kinds[j]` (`Kind`'s
-/// index), its namer `people[j]`, its year `years[j]`, no context. JSON:
-/// the packed arrays (by their pack.rs names), each name at `end`, and
-/// each name's forms over time (`NameBook::forms_json`).
+/// index), its namer `people[j]`, its year `years[j]`, no context; its
+/// people over time the rows of `held_place`, `held_year`,
+/// `held_people` of it (its people at the end the last); the contacts
+/// `contacts`, five numbers each (name_contact.rs `Contact`: two
+/// peoples, the border, the days, the links). JSON: the packed arrays
+/// (by their pack.rs names), each name at `end`, each name's forms over
+/// time (`NameBook::forms_json`), the other names (`others_json`), and by
+/// loan its sounds, its namer's sounds in its year and whether its
+/// namer's syllable rules allow each word (`loans`).
 #[allow(clippy::too_many_arguments)]
 pub fn names_of_places_json(
     peoples: &[crate::languages::PeopleInput],
@@ -533,9 +955,13 @@ pub fn names_of_places_json(
     kinds: &[u8],
     people: &[i32],
     years: &[f64],
+    held_place: &[i32],
+    held_year: &[f64],
+    held_people: &[i32],
+    contacts: &[f64],
 ) -> String {
     let (tree, _) = Languages::build(peoples, seed, start, end);
-    let places: Vec<Place> = (0..kinds.len())
+    let mut places: Vec<Place> = (0..kinds.len())
         .map(|j| Place {
             kind: Kind::ALL[kinds[j] as usize % Kind::ALL.len()],
             place: j as i32,
@@ -543,9 +969,32 @@ pub fn names_of_places_json(
             people: people[j],
             year: years[j],
             context: Vec::new(),
+            size: 1.0,
+            until: f64::INFINITY,
+            held: Vec::new(),
+            end_people: people[j],
+        })
+        .collect();
+    for r in 0..held_place.len().min(held_year.len()).min(held_people.len()) {
+        if let Some(p) = places.get_mut(held_place[r].max(0) as usize) {
+            p.held.push((held_year[r] as f32, held_people[r]));
+            p.end_people = held_people[r];
+        }
+    }
+    let contacts: Vec<Contact> = contacts
+        .as_chunks::<5>()
+        .0
+        .iter()
+        .map(|c| Contact {
+            a: c[0] as i32,
+            b: c[1] as i32,
+            border_km: c[2],
+            days: c[3],
+            links: c[4],
         })
         .collect();
     let names = Names::give(&tree, &places);
+    let aliases = give_aliases(&tree, &places, &names, &contacts, peoples, end);
     let count = names.len();
     let arrays = json!({
         "nameKind": names.kind,
@@ -557,15 +1006,43 @@ pub fn names_of_places_json(
         "nameMeaning": names.meaning,
         "nameOwnLength": names.own_length,
         "nameOwn": names.own,
+        "aliasName": aliases.name,
+        "aliasHow": aliases.how,
+        "aliasNamer": aliases.namer,
+        "aliasYear": aliases.year,
+        "aliasPattern": aliases.pattern,
+        "aliasMeaning": aliases.meaning,
+        "aliasLength": aliases.length,
+        "aliasSounds": aliases.sounds,
     });
-    let mut book = NameBook::new(tree, names).expect("the names given read");
+    let mut book = NameBook::new(tree, names, aliases).expect("the names given read");
+    let mut loans = Vec::new();
+    for a in 0..book.aliases.len() {
+        let e = book.alias(a);
+        let Said::Loan { words, .. } = &e.said else {
+            continue;
+        };
+        let sp = book.tree.speech(e.namer, e.year, &mut book.cache);
+        let inventory: Vec<u8> = sp.lang.inventory.sounds().iter().map(|p| p.0).collect();
+        let fits: Vec<bool> = words.iter().map(|w| sp.lang.pronounceable(w)).collect();
+        let sounds: Vec<Vec<u8>> = words
+            .iter()
+            .map(|w| w.iter().map(|p| p.0).collect())
+            .collect();
+        loans.push(json!({ "alias": a, "sounds": sounds, "inventory": inventory, "fits": fits }));
+    }
     let at_end = book.at_json(end, 0, count);
     let forms = book.forms_json(0, count);
-    format!("{{\"arrays\":{arrays},\"atEnd\":{at_end},\"forms\":{forms}}}")
+    let others = book.others_json(0, count);
+    format!(
+        "{{\"arrays\":{arrays},\"atEnd\":{at_end},\"forms\":{forms},\"others\":{others},\"loans\":{}}}",
+        Value::Array(loans)
+    )
 }
 
-// The words through one dated change: each word the change leaves a vowel.
-fn wear(words: &mut [Vec<Phoneme>], d: &Dated) {
+/// The words through one dated change: each word the change leaves a
+/// vowel.
+pub(crate) fn wear(words: &mut [Vec<Phoneme>], d: &Dated) {
     let change = changes()[d.change].with_choice(d.choice);
     for w in words.iter_mut() {
         if !change.may_change(w) {
@@ -591,12 +1068,21 @@ pub struct PlacesInput<'a> {
     /// (-1 for none), its town at the end (people; 0 for none).
     pub villages: &'a [i32],
     pub village_from: &'a [f64],
+    pub village_to: &'a [f64],
     pub village_people: &'a [i32],
     pub village_town: &'a [f64],
-    /// Each cell's first people at a tree step, and when; -1 and Infinity
-    /// where none came.
-    pub first_people: &'a [i32],
-    pub first_at: &'a [f32],
+    /// Each cell's people at the tree steps where it changed (lived in,
+    /// with a people id): [year, people id], the first its first people.
+    pub held: &'a [Vec<(f32, i32)>],
+    /// Each cell's people at the end, -1 for none.
+    pub end_people: &'a [i32],
+}
+
+// A cell's first people and when; -1 and Infinity where none came.
+fn first_people(input: &PlacesInput, c: usize) -> (i32, f32) {
+    input.held[c]
+        .first()
+        .map_or((-1, f32::INFINITY), |&(t, p)| (p, t))
 }
 
 // The first people of some cells and the year: the earliest first people,
@@ -605,8 +1091,9 @@ pub struct PlacesInput<'a> {
 fn first_of(input: &PlacesInput, cells: &[usize]) -> Option<(i32, f64, usize)> {
     let mut at = f32::INFINITY;
     for &c in cells {
-        if input.first_people[c] >= 0 && input.first_at[c] < at {
-            at = input.first_at[c];
+        let (p, t) = first_people(input, c);
+        if p >= 0 && t < at {
+            at = t;
         }
     }
     if at == f32::INFINITY {
@@ -614,10 +1101,10 @@ fn first_of(input: &PlacesInput, cells: &[usize]) -> Option<(i32, f64, usize)> {
     }
     let mut counts: Vec<(i32, usize, usize)> = Vec::new();
     for &c in cells {
-        if input.first_at[c] != at || input.first_people[c] < 0 {
+        let (p, t) = first_people(input, c);
+        if t != at || p < 0 {
             continue;
         }
-        let p = input.first_people[c];
         match counts.iter_mut().find(|x| x.0 == p) {
             Some(x) => x.1 += 1,
             None => counts.push((p, 1, c)),
@@ -829,26 +1316,46 @@ pub fn landmass_context(h: &Habitat, m: usize, first: usize) -> Vec<&'static str
 pub fn places_of(input: &PlacesInput) -> Vec<Place> {
     let h = input.h;
     let mut out = Vec::new();
+    // A place followed from `watch`: its people over time and at the end.
+    let place = |kind, place, cell, people, year, context, size, until, watch: usize| Place {
+        kind,
+        place,
+        cell,
+        people,
+        year,
+        context,
+        size,
+        until,
+        held: input.held[watch].clone(),
+        end_people: input.end_people[watch],
+    };
     // THE VILLAGES: the people of the cell when it was founded.
     for v in 0..input.village_from.len() {
         let cell = input.villages[2 * v] as usize;
         let mut people = input.village_people[v];
         if people < 0 {
-            people = input.first_people[cell];
+            people = first_people(input, cell).0;
         }
-        out.push(Place {
-            kind: Kind::Village,
-            place: v as i32,
-            cell: cell as i32,
+        out.push(place(
+            Kind::Village,
+            v as i32,
+            cell as i32,
             people,
-            year: input.village_from[v],
-            context: village_context(
+            input.village_from[v],
+            village_context(
                 h,
                 cell,
                 input.villages[2 * v + 1] as u8,
                 input.village_town[v],
             ),
-        });
+            if input.village_to[v] == f64::INFINITY {
+                input.village_town[v]
+            } else {
+                0.0
+            },
+            input.village_to[v],
+            cell,
+        ));
     }
     // THE RIVERS: the first people at the mouth, else along it.
     for river in &h.rivers {
@@ -858,17 +1365,20 @@ pub fn places_of(input: &PlacesInput) -> Vec<Place> {
         let cells: Vec<usize> = river.cells.iter().map(|&c| c as usize).collect();
         let mouth = cells[cells.len() - 1];
         let first = first_of(input, &[mouth]).or_else(|| first_of(input, &cells));
-        let Some((people, year, _)) = first else {
+        let Some((people, year, watch)) = first else {
             continue;
         };
-        out.push(Place {
-            kind: Kind::River,
-            place: river.line as i32,
-            cell: mouth as i32,
+        out.push(place(
+            Kind::River,
+            river.line as i32,
+            mouth as i32,
             people,
             year,
-            context: river_context(h, &cells),
-        });
+            river_context(h, &cells),
+            cells.len() as f64,
+            f64::INFINITY,
+            watch,
+        ));
     }
     // THE MOUNTAINS: a landmass's highest ranges.
     let mut ranges: Vec<(i32, f32, usize, Vec<usize>)> = groups(h, |c| {
@@ -894,34 +1404,40 @@ pub fn places_of(input: &PlacesInput) -> Vec<Place> {
             continue;
         }
         on_landmass.1 += 1;
-        let Some((people, year, _)) = first_of(input, &with_ring(h, cells)) else {
+        let Some((people, year, watch)) = first_of(input, &with_ring(h, cells)) else {
             continue;
         };
-        out.push(Place {
-            kind: Kind::Mountain,
-            place: *peak as i32,
-            cell: *peak as i32,
+        out.push(place(
+            Kind::Mountain,
+            *peak as i32,
+            *peak as i32,
             people,
             year,
-            context: mountain_context(h, *peak, cells),
-        });
+            mountain_context(h, *peak, cells),
+            h.height_m[*peak] as f64,
+            f64::INFINITY,
+            watch,
+        ));
     }
     // THE LAKES.
     for cells in groups(h, |c| h.lake[c] != 0) {
         if cells.len() < LAKE_LEAST_CELLS {
             continue;
         }
-        let Some((people, year, _)) = first_of(input, &with_ring(h, &cells)) else {
+        let Some((people, year, watch)) = first_of(input, &with_ring(h, &cells)) else {
             continue;
         };
-        out.push(Place {
-            kind: Kind::Lake,
-            place: cells[0] as i32,
-            cell: cells[0] as i32,
+        out.push(place(
+            Kind::Lake,
+            cells[0] as i32,
+            cells[0] as i32,
             people,
             year,
-            context: lake_context(h, &cells),
-        });
+            lake_context(h, &cells),
+            cells.len() as f64,
+            f64::INFINITY,
+            watch,
+        ));
     }
     // THE LANDMASSES: the first people.
     let mut cells_of: Vec<Vec<usize>> = vec![Vec::new(); h.landmasses];
@@ -937,14 +1453,17 @@ pub fn places_of(input: &PlacesInput) -> Vec<Place> {
         let Some((people, year, cell)) = first_of(input, cells) else {
             continue;
         };
-        out.push(Place {
-            kind: Kind::Landmass,
-            place: m as i32,
-            cell: cell as i32,
+        out.push(place(
+            Kind::Landmass,
+            m as i32,
+            cell as i32,
             people,
             year,
-            context: landmass_context(h, m, cell),
-        });
+            landmass_context(h, m, cell),
+            h.landmass_km2[m],
+            f64::INFINITY,
+            cell,
+        ));
     }
     out
 }
@@ -1019,6 +1538,10 @@ mod tests {
                     people: p as i32,
                     year: 100.0 + 700.0 * p as f64,
                     context: vec!["river", "forest", "big"],
+                    size: 1.0,
+                    until: f64::INFINITY,
+                    held: Vec::new(),
+                    end_people: p as i32,
                 });
             }
         }
@@ -1032,7 +1555,7 @@ mod tests {
         let names = Names::give(&tree, &list);
         assert_eq!(names.len(), list.len());
         let back = Languages::unpack(&tree.pack()).unwrap();
-        let mut book = NameBook::new(back, names.clone()).unwrap();
+        let mut book = NameBook::new(back, names.clone(), Aliases::default()).unwrap();
         // The same tree and places, the same names.
         assert_eq!(Names::give(&tree, &list), names);
         let mut changed = 0;

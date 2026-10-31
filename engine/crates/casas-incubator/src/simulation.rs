@@ -60,9 +60,10 @@ use crate::eruptions::{
 use crate::habitat::{ARABLE, COPPER, FISH, Habitat, PASTURE, km_between, latitude_deg};
 use crate::languages::{Languages, PeopleInput};
 use crate::log::{LogEvent, POPULATION_MARKS};
+use crate::name_contact::{contacts_of, give_aliases};
 use crate::peoples::{Traits, Tree};
 use crate::peopling::Peopling;
-use crate::place_names::{Names, PlacesInput, places_of};
+use crate::place_names::{Aliases, Names, PlacesInput, places_of};
 use crate::settle::{Goods, settle_history};
 use crate::travel::{reset, travel_days, within_days};
 use casas_generator::climate::biomes::biome;
@@ -702,6 +703,9 @@ pub struct SimulationResult {
     /// THE NAMES (place_names.rs, TEG-139): the places' names as recipes.
     /// Packed since 2026-10-31 (v6), after the languages.
     pub names: Names,
+    /// THE OTHER NAMES (name_contact.rs, TEG-142, TEG-143): the old names
+    /// and the exonyms. Packed since 2026-10-31 (v6), after the names.
+    pub aliases: Aliases,
     /// The cells whose traits the fields replaced; the branches' splits
     /// (peoples.rs).
     pub replaced: u32,
@@ -1065,11 +1069,10 @@ struct Sim<'h, 'a> {
     log: Vec<LogEvent>,
     // THE PEOPLES (peoples.rs): they feed back into nothing here.
     traits: Traits,
-    // THE NAMES (place_names.rs): each cell's people at the first tree
-    // step people lived in it, and that step's time; -1 and Infinity
-    // before.
-    first_people: Vec<i32>,
-    first_at: Vec<f32>,
+    // THE NAMES (place_names.rs, name_contact.rs): each cell's people at
+    // the tree steps where it changed, people living in it, [time, people
+    // id]: the first its first people.
+    held: Vec<Vec<(f32, i32)>>,
     // THE ERUPTIONS: the share of what each cell carries the ash or the
     // gas takes now, and the ash falls that still fade.
     ash: Vec<f32>,
@@ -1328,9 +1331,9 @@ impl Sim<'_, '_> {
             &mut self.log,
         );
         for i in 0..people.len() {
-            if self.first_people[i] < 0 && people[i] > 0 && self.traits.ident[i] >= 0 {
-                self.first_people[i] = self.traits.ident[i];
-                self.first_at[i] = t as f32;
+            let id = self.traits.ident[i];
+            if people[i] > 0 && id >= 0 && self.held[i].last().is_none_or(|x| x.1 != id) {
+                self.held[i].push((t as f32, id));
             }
         }
     }
@@ -1716,8 +1719,7 @@ pub fn simulate(
         landmass_reached: vec![0u8; h.landmasses],
         log: Vec::new(),
         traits: Traits::seed(h, input.peopling, input.seed, &way_days),
-        first_people: vec![-1i32; n],
-        first_at: vec![f32::INFINITY; n],
+        held: vec![Vec::new(); n],
         ash: vec![0f32; n],
         ashes: Vec::new(),
     };
@@ -3254,19 +3256,14 @@ pub fn simulate(
     // events after the peoples'.
     let (languages, told) = Languages::build(&PeopleInput::of_tree(&tree), input.seed, t0, end);
     sim.log.extend(told);
-    // THE NAMES (place_names.rs): who names what, kept as recipes.
-    let names = Names::give(
-        &languages,
-        &places_of(&PlacesInput {
-            h,
-            villages: &villages,
-            village_from: &village_from,
-            village_people: &village_people,
-            village_town: &town,
-            first_people: &sim.first_people,
-            first_at: &sim.first_at,
-        }),
-    );
+    // Each cell's people at the end (THE NAMES, the contact).
+    let end_people: Vec<i32> = kept[kept.len() - 1]
+        .people
+        .iter()
+        .zip(&sim.traits.ident)
+        .map(|(&p, &id)| if p > 0 { id } else { -1 })
+        .collect();
+    let held = std::mem::take(&mut sim.held);
     population.truncate(((end - t0) / POPULATION_STEP) as usize + 1);
     let mut result = SimulationResult {
         arrival: sim.arrival,
@@ -3315,12 +3312,14 @@ pub fn simulate(
         trait_frames,
         tree,
         languages,
-        names,
+        names: Names::default(),
+        aliases: Aliases::default(),
         goods: Goods::default(),
     };
     // WHERE THE GOODS CAME FROM: the settlement of the history, as the
-    // client computes it from H1 (settle.rs), its goods alone kept.
-    result.goods = settle_history(
+    // client computes it from H1 (settle.rs), its goods alone kept; its
+    // links for the contact.
+    let settled = settle_history(
         h,
         &result.arrival,
         &result.farm_at,
@@ -3330,8 +3329,33 @@ pub fn simulate(
         &result.village_to,
         &result.village_town,
         end,
-    )
-    .goods;
+    );
+    result.goods = settled.goods;
+    // THE NAMES (place_names.rs): who names what, kept as recipes; THE
+    // OTHER NAMES (name_contact.rs): the old names where another people
+    // took a place, the exonyms between the peoples in contact at the end.
+    let places = places_of(&PlacesInput {
+        h,
+        villages: &result.villages,
+        village_from: &village_from,
+        village_to: &village_to,
+        village_people: &village_people,
+        village_town: &town,
+        held: &held,
+        end_people: &end_people,
+    });
+    result.names = Names::give(&result.languages, &places);
+    let peoples = &result.tree.peoples;
+    let heart: Vec<i32> = peoples.iter().map(|p| p.heart).collect();
+    let contacts = contacts_of(h, &end_people, &heart, &result.villages, &settled.links);
+    result.aliases = give_aliases(
+        &result.languages,
+        &places,
+        &result.names,
+        &contacts,
+        &PeopleInput::of_tree(&result.tree),
+        end,
+    );
     result
 }
 

@@ -867,6 +867,11 @@ impl Cache {
         self.speeches.clear();
     }
 
+    /// How many speeches it keeps.
+    pub fn speeches_len(&self) -> usize {
+        self.speeches.len()
+    }
+
     fn proto(&mut self, seed: u32) -> &Language {
         self.protos
             .entry(seed)

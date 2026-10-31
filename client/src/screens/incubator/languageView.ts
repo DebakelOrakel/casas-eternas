@@ -1,4 +1,4 @@
-import type { LanguageDetail, LanguageLevel, LanguageNode, LanguageView, NameEntry } from '../../ui/languagePanel/languageTypes'
+import type { LanguageDetail, LanguageLevel, LanguageNode, LanguageView, NameEntry, OtherName } from '../../ui/languagePanel/languageTypes'
 import { LANGUAGE_LEVEL, NAME_KINDS, type LanguagesTree } from './historyPack'
 import type { LogEvent } from './historyLogShared'
 import { KEEP_YEARS } from './peopleShared'
@@ -47,7 +47,12 @@ export interface LanguagesMade {
 // more), its place and cell, the node of the tree that gave it, the year
 // it was given, and its forms over time as the crate spells them (its WASM
 // `PlaceNames`): the years from which each form holds, rising, and the
-// forms. The names are the world's content: no i18n.
+// forms; the current name, through the names the peoples that took the
+// place gave it. THE OTHER NAMES (TEG-142, TEG-143; the crate's
+// name_contact.rs): by name its chain from its first name (how it came,
+// historyPack.ts NAME_HOW or NAME_FIRST; the node; the year; its form when
+// the next one came) and its exonyms (how, the node, the year, the forms
+// over time). The names are the world's content: no i18n.
 export interface HistoryNames {
   kind: Uint8Array
   town: Uint8Array
@@ -55,7 +60,54 @@ export interface HistoryNames {
   cell: Int32Array
   namer: Uint16Array
   year: Float32Array
-  forms: { years: number[]; forms: string[] }[]
+  forms: NameForms[]
+  chain: NameChainEntry[][]
+  exonyms: NameExonym[][]
+}
+
+export interface NameForms {
+  years: number[]
+  forms: string[]
+}
+export interface NameChainEntry {
+  how: number
+  namer: number
+  year: number
+  form: string
+}
+export interface NameExonym extends NameForms {
+  how: number
+  namer: number
+  year: number
+}
+
+// The crate's names over time (`PlaceNames.forms`, by name [year, form,
+// …]) and other names (`PlaceNames.others`), as HistoryNames holds them.
+export type OthersRaw = { chain: [number, number, number, string][]; exonyms: [number, number, number, (number | string)[]][] }[]
+export function formsOf(list: (number | string)[]): NameForms {
+  return { years: list.filter((_, k) => k % 2 === 0) as number[], forms: list.filter((_, k) => k % 2 === 1) as string[] }
+}
+export function otherNamesOf(others: OthersRaw): Pick<HistoryNames, 'chain' | 'exonyms'> {
+  return {
+    chain: others.map((o) => o.chain.map(([how, namer, year, form]) => ({ how, namer, year, form }))),
+    exonyms: others.map((o) => o.exonyms.map(([how, namer, year, list]) => ({ how, namer, year, ...formsOf(list) }))),
+  }
+}
+
+// A form over time in `year`: the form of the last span begun by then.
+function formIn(f: NameForms, year: number): string {
+  let k = 0
+  while (k + 1 < f.years.length && f.years[k + 1] <= year) k++
+  return f.forms[k] ?? ''
+}
+
+// The entry of name j's chain current in `year`: the last given by then;
+// -1 before its first.
+export function chainAt(names: HistoryNames, j: number, year: number): number {
+  const chain = names.chain[j]
+  let c = -1
+  while (c + 1 < chain.length && chain[c + 1].year <= year) c++
+  return c
 }
 
 // A village is a town in the languages panel from this town at the
@@ -67,10 +119,7 @@ export const TOWN_PEOPLE = 1000
 // Name j in `year`: the form of that year; null before it was given.
 export function nameAt(names: HistoryNames, j: number, year: number): string | null {
   if (year < names.year[j]) return null
-  const { years, forms } = names.forms[j]
-  let k = 0
-  while (k + 1 < years.length && years[k + 1] <= year) k++
-  return forms[k] ?? null
+  return formIn(names.forms[j], year) || null
 }
 
 // The languages a history carries: its tree, what the crate made of it,
@@ -164,29 +213,35 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
     }
     if (peoplesTree.big[p]) for (let at = own; at >= 0; at = parentOf[at]) nodes[at].peoples.push(p)
   }
-  // THE NAMES by the view's node: each name under the node that gave it
-  // and every node above it, in the order given.
+  // THE NAMES by the view's node: each name under the node of each entry
+  // of its chain and every node above it, in the order given; listed in a
+  // year under the node of the entry current then (another people that
+  // took the place gave it its name since: TEG-143).
   const names = history.languages.names
-  const namesOf = new Map<string, number[]>()
-  const namerOf: string[] = []
+  const nodeIdOf = (k: number): string => (tree.level[k] === LANGUAGE_LEVEL.dialect ? viewId(tree, k) : spokenId(tree, k))
+  const namesOf = new Map<string, [number, number][]>()
   if (names) {
-    const order = Array.from(names.kind, (_, j) => j).sort((a, b) => names.year[a] - names.year[b] || a - b)
-    for (const j of order) {
-      const k = names.namer[j]
-      const id = tree.level[k] === LANGUAGE_LEVEL.dialect ? viewId(tree, k) : spokenId(tree, k)
-      namerOf[j] = id
-      for (let at = position.get(id) ?? -1; at >= 0; at = parentOf[at]) {
+    const given: [number, number][] = []
+    names.chain.forEach((chain, j) => chain.forEach((_, c) => given.push([j, c])))
+    given.sort(([a, c], [b, d]) => names.chain[a][c].year - names.chain[b][d].year || a - b || c - d)
+    for (const [j, c] of given) {
+      for (let at = position.get(nodeIdOf(names.chain[j][c].namer)) ?? -1; at >= 0; at = parentOf[at]) {
         const list = namesOf.get(nodes[at].id)
-        if (list) list.push(j)
-        else namesOf.set(nodes[at].id, [j])
+        if (list) list.push([j, c])
+        else namesOf.set(nodes[at].id, [[j, c]])
       }
     }
   }
   // The names a panel lists: those given by `year`.
   const listed = (j: number, year: number): boolean => names !== null && names.year[j] <= year
-  const entry = (j: number, year: number): NameEntry => {
+  const current = (j: number, c: number, year: number): boolean => listed(j, year) && chainAt(names!, j, year) === c
+  const entry = (j: number, c: number, year: number): NameEntry => {
     const kind = NAME_KINDS[names!.kind[j]]
-    return { name: nameAt(names!, j, year) ?? '', kind: kind === 'village' && names!.town[j] ? 'town' : kind, language: namerOf[j], cell: names!.cell[j], given: names!.year[j] }
+    const chain = names!.chain[j]
+    // Its older names, the latest first; its exonyms by then.
+    const older: OtherName[] = chain.slice(0, c).reverse().map((e) => ({ name: e.form, language: nodeIdOf(e.namer) }))
+    const exonyms: OtherName[] = names!.exonyms[j].filter((e) => e.year <= year).map((e) => ({ name: formIn(e, year), language: nodeIdOf(e.namer) }))
+    return { name: nameAt(names!, j, year) ?? '', kind: kind === 'village' && names!.town[j] ? 'town' : kind, language: nodeIdOf(chain[c].namer), cell: names!.cell[j], given: chain[c].year, older, exonyms }
   }
   const detailOf = new Map<string, number>()
   for (let k = 0; k < count; k++) {
@@ -202,16 +257,18 @@ export function deriveLanguageView(history: { tree: PeoplesWithoutIds; log: read
       return detail ? { id, ...detail } : null
     },
     names: (id, from, count, year = Infinity) => {
-      const list = (namesOf.get(id) ?? []).filter((j) => listed(j, year))
+      const list = (namesOf.get(id) ?? []).filter(([j, c]) => current(j, c, year))
       const at = Number.isFinite(year) ? year : history.end
-      return { total: list.length, rows: list.slice(from, from + count).map((j) => entry(j, at)) }
+      return { total: list.length, rows: list.slice(from, from + count).map(([j, c]) => entry(j, c, at)) }
     },
     namesFound: (query, year) => {
       const found = new Set<string>()
       if (!names || !query) return found
       for (let j = 0; j < names.kind.length; j++) {
-        if (found.has(namerOf[j]) || !listed(j, year)) continue
-        if ((nameAt(names, j, year) ?? '').toLowerCase().includes(query)) found.add(namerOf[j])
+        if (!listed(j, year)) continue
+        const id = nodeIdOf(names.chain[j][chainAt(names, j, year)].namer)
+        if (found.has(id)) continue
+        if ((nameAt(names, j, year) ?? '').toLowerCase().includes(query)) found.add(id)
       }
       return found
     },
