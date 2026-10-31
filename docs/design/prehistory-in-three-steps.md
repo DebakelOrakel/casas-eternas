@@ -684,8 +684,9 @@ Open:
    (SPLIT_TOLD_SHARE) would tell more (2026-10-29).
 3. Done 2026-10-30: the far trade's sources of the goods in H1, for
    step 3 (above, the exchange; Status).
-4. Step 1's sea-level curve: drawn from the world's seed; its depth is a
-   control since 2026-10-30 (Step 1), its shape is not.
+4. Done 2026-10-31: step 1's sea-level curve stays drawn from the
+   world's seed; its depth is a control (2026-10-30, Step 1), its shape
+   is part of the world (TEG-8).
 5. Done 2026-10-30: the dry shelf's own land fields (Status; TEG-13).
 6. The peoples' stripes on the v15 ecology: the rays are gone
    (2026-10-29, Status). What is left are farmer peoples the shape of
@@ -693,8 +694,12 @@ Open:
    1 000 km by 150 km) and forager peoples with farmers' enclaves or
    left between two farmed regions; the measure (border over three
    times a disc's) counts the enclaves' borders too.
-7. Thalassor's own origin on the v15 ecology (996 766) is on a landmass
-   of 3.7 M km²: step 1 reaches 14.8 % of the land, step 2 has no city.
+7. Done 2026-10-31: the origin when none is given is the one of the
+   landmasses of 1 M km² or more from which step 1 reaches the most land
+   (TEG-7). Before, the land that fed best: Thalassor's (996 766) on a
+   landmass of 3.7 M km², 14.8 % of the land reached, no city in step 2;
+   Zephyra's 7.5 %. Now Morvane 95.4 %, Thalassor 73.1 %, Zephyra
+   85.0 %; the largest landmass alone gave Morvane 50.7 %.
 8. No farming centre in the deserts (BW) since the flood silt either
    (2026-10-30, Status): the floodplain is narrower than a cell, and a
    cell's arable land is the mean over its land. Decided 2026-10-30: no

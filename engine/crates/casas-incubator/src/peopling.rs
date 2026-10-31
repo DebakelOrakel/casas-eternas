@@ -57,6 +57,10 @@ pub const GROUP_SHARE: f64 = 0.02;
 /// The span ends when the melting brings the sea up to this many metres
 /// below today's: on the earth some 40 to 60 m when the farming began.
 pub const END_SEA_DROP_M: f64 = 50.0;
+/// The origin when none is given is drawn among the landmasses of this
+/// size or more, km² (history.rs `origin_of`): one candidate each, so a
+/// world gives a few, and step 1 runs once for each.
+pub const ORIGIN_LANDMASS_KM2: f64 = 1.0e6;
 
 /// Step 1's controls (THE CONTROLS): the boats' reach over open sea at
 /// the span's end, km; the sea's drop at cold 1, m.

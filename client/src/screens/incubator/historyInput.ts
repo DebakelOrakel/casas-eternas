@@ -63,7 +63,7 @@ export interface HistoryIncubator {
   count(): number
   growFlora(seed: number): void
   populate(seed: number): void
-  originOf(): number
+  originOf(seed: number, reachKm?: number, seaLowM?: number): number
 }
 export type IncubatorBuild<T> = new (sphere: boolean, spacingKm: number, width: number, height: number, nodes: Int32Array, nodeW: number, nodeH: number, land: Uint8Array, biome: Uint8Array, koppen: Uint8Array, z: Float32Array, lakeDepth: Float32Array, ecology: Uint8Array, present: number, riverPoints?: Float32Array, riverLengths?: Uint32Array, riverRegimes?: Uint8Array, shelfCarrying?: Uint8Array) => T
 

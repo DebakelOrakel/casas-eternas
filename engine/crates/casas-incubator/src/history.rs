@@ -8,7 +8,7 @@
 use crate::catalog::catalog;
 use crate::flora::Layer as Grown;
 use crate::habitat::{CARRYING, Habitat};
-use crate::peopling::{Controls, people};
+use crate::peopling::{Controls, ORIGIN_LANDMASS_KM2, people};
 use crate::simulation::{BigGame, Layer, Rain, SimulationInput, SimulationResult, simulate};
 use casas_generator::climate::biomes::biome;
 use casas_generator::climate::koppen::KOPPEN_CODES;
@@ -48,30 +48,75 @@ pub fn carrying_of(h: &Habitat) -> Vec<f32> {
         .unwrap_or_else(|| vec![0.4; h.count])
 }
 
-/// The origin when none is given: the land that feeds best in a tropical
-/// class (Köppen A), else anywhere.
-pub fn origin_of(h: &Habitat, carrying: &[f32]) -> i32 {
-    let mut best: i32 = -1;
-    let mut best_tropical: i32 = -1;
+/// The origin when none is given (TEG-7, 2026-10-31): of the landmasses
+/// of ORIGIN_LANDMASS_KM2 or more, each its land that feeds best in a
+/// tropical class (Köppen A), else its land that feeds best; of those, the
+/// one from which step 1 (`people`, on the same seed and controls) reaches
+/// the most land. Without such a landmass, the land that feeds best in a
+/// tropical class anywhere, else anywhere. The best land of the whole
+/// world alone lay on a landmass step 1 hardly leaves on two of three
+/// worlds (Thalassor 14.8 %, Zephyra 7.5 % of the land reached), and the
+/// largest landmass alone fails on Morvane (50.7 %: its second landmass
+/// is never reached).
+pub fn origin_of(h: &Habitat, carrying: &[f32], seed: f64, controls: Controls) -> i32 {
+    let open =
+        |i: usize| h.land[i] != 0 && h.biome[i] != biome::ICE && h.biome[i] != biome::GLACIER;
+    let tropical = |i: usize| {
+        KOPPEN_CODES
+            .get(h.koppen[i] as usize)
+            .is_some_and(|c| c.starts_with('A'))
+    };
+    // Per landmass (and at index `landmasses`, the whole world): the best
+    // land, and the best tropical land.
+    let mut best = vec![-1i32; h.landmasses + 1];
+    let mut best_tropical = vec![-1i32; h.landmasses + 1];
     for i in 0..h.count {
-        if h.land[i] == 0 || h.biome[i] == biome::ICE || h.biome[i] == biome::GLACIER {
+        if !open(i) {
             continue;
         }
-        if best < 0 || carrying[i] > carrying[best as usize] {
-            best = i as i32;
+        let mut slots = vec![h.landmasses];
+        if h.landmass[i] >= 0 && h.landmass_km2[h.landmass[i] as usize] >= ORIGIN_LANDMASS_KM2 {
+            slots.push(h.landmass[i] as usize);
         }
-        let tropical = KOPPEN_CODES
-            .get(h.koppen[i] as usize)
-            .is_some_and(|c| c.starts_with('A'));
-        if tropical && (best_tropical < 0 || carrying[i] > carrying[best_tropical as usize]) {
-            best_tropical = i as i32;
+        for m in slots {
+            if best[m] < 0 || carrying[i] > carrying[best[m] as usize] {
+                best[m] = i as i32;
+            }
+            if tropical(i)
+                && (best_tropical[m] < 0 || carrying[i] > carrying[best_tropical[m] as usize])
+            {
+                best_tropical[m] = i as i32;
+            }
         }
     }
-    if best_tropical >= 0 {
-        best_tropical
-    } else {
-        best
+    let pick = |m: usize| {
+        if best_tropical[m] >= 0 {
+            best_tropical[m]
+        } else {
+            best[m]
+        }
+    };
+    let candidates: Vec<i32> = (0..h.landmasses).map(pick).filter(|&c| c >= 0).collect();
+    if candidates.len() < 2 {
+        return candidates
+            .first()
+            .copied()
+            .unwrap_or_else(|| pick(h.landmasses));
     }
+    let mut chosen = -1;
+    let mut most = -1.0;
+    for &c in &candidates {
+        let p = people(h, carrying, &[c as usize], seed, controls);
+        let reached: f64 = (0..h.count)
+            .filter(|&i| open(i) && p.arrival[i].is_finite())
+            .map(|i| h.area_km2[i] as f64)
+            .sum();
+        if reached > most {
+            most = reached;
+            chosen = c;
+        }
+    }
+    chosen
 }
 
 /// The history: `flora` the plants then the trees, `fauna` the animals, in
@@ -120,7 +165,7 @@ pub fn run_history_keeping(
     let origin = if origin >= 0 && h.land[origin as usize] != 0 {
         origin
     } else {
-        origin_of(h, &carrying)
+        origin_of(h, &carrying, seed, controls)
     };
     let crops = c
         .plants

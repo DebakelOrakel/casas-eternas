@@ -428,11 +428,16 @@ impl Incubator {
         ice_distance(&self.habitat)
     }
 
-    /// The origin a history takes when none is given (history.rs
-    /// origin_of).
+    /// The origin a history takes when none is given, on step 1's seed
+    /// and controls (history.rs origin_of).
     #[wasm_bindgen(js_name = originOf)]
-    pub fn origin_of(&self) -> i32 {
-        origin_of(&self.habitat, &carrying_of(&self.habitat))
+    pub fn origin_of(&self, seed: f64, reach_km: Option<f64>, sea_low_m: Option<f64>) -> i32 {
+        origin_of(
+            &self.habitat,
+            &carrying_of(&self.habitat),
+            seed,
+            controls_of(reach_km, sea_low_m),
+        )
     }
 
     #[wasm_bindgen(js_name = landmassKm2)]

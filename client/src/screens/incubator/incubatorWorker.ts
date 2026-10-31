@@ -138,7 +138,7 @@ async function answer(ask: IncubatorRequest): Promise<void> {
     return
   }
   if (ask.type === 'peopling') {
-    const origin = ask.origin >= 0 ? ask.origin : e.originOf()
+    const origin = ask.origin >= 0 ? ask.origin : e.originOf(seed, ask.controls.reachKm, ask.controls.seaLowM)
     const span = e.people(Int32Array.of(origin), seed, ask.controls.reachKm, ask.controls.seaLowM)
     const arrival = e.peoplingFloats('arrival')
     const from = e.peoplingInts('from')

@@ -4,6 +4,9 @@ The prehistory of a world: the old stone age, the new stone age, the peoples, th
 settlement, the exchange and the chronicle. See [README](./README.md) for the format.
 The incubator's controls and layout are in [ui.md](./ui.md).
 
+## 2026-10-31
+- **changed** Old Stone Age: without a chosen origin, the people start on the large landmass from which they reach the most land. `incubator.step.oldStoneAge`
+
 ## 2026-10-30
 - **changed** Old Stone Age: a shelf the low sea lays dry feeds the people as its own land would, not as the coast beside it. `incubator.step.oldStoneAge`
 - **new** Overlays: the hover card shows the temperature of the point under the pointer over the year, as a curve. `readout.chart.temperature`

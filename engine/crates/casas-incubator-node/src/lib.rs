@@ -248,8 +248,13 @@ impl Incubator {
     }
 
     #[napi]
-    pub fn origin_of(&self) -> i32 {
-        origin_of(&self.habitat, &carrying_of(&self.habitat))
+    pub fn origin_of(&self, seed: f64, reach_km: Option<f64>, sea_low_m: Option<f64>) -> i32 {
+        origin_of(
+            &self.habitat,
+            &carrying_of(&self.habitat),
+            seed,
+            controls_of(reach_km, sea_low_m),
+        )
     }
 
     #[napi]

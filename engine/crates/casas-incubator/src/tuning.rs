@@ -49,7 +49,9 @@ use serde_json::{Map, Value, json};
 /// `Controls`, 2026-10-30), part of H1's input: their defaults give the
 /// same bytes; a dry shelf carries what level 1's ecology gives it with
 /// the shelf as land, not what its coast carries (simulation.rs
-/// `ground_of`, TEG-13, 2026-10-30).
+/// `ground_of`, TEG-13, 2026-10-30); the origin when none is given on
+/// the landmass from which step 1 reaches the most land (history.rs
+/// `origin_of`, TEG-7, 2026-10-31).
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
@@ -92,7 +94,7 @@ pub fn constants() -> Value {
         "habitat": object(table!(habitat: CELL_SPACING_KM)),
         "niche": object(table!(niche: SUITABLE, BARRIER, SPREAD_KM, ORIGIN_AREA_KM2, OFF_COVER, BIG_RIVER)),
         "travel": object(table!(travel: WALK_HOURS, RIVER_BOAT_SIZE, RIVER_DOWN_KM_DAY, RIVER_UP_KM_DAY, COAST_DEPTH_M, COAST_KM_DAY, LANDING_DAYS)),
-        "peopling": object(table!(peopling: REACH_START_KM, REACH_END_KM, SEA_KM_A, CROSSING_YEARS, GROUP_SHARE, END_SEA_DROP_M)),
+        "peopling": object(table!(peopling: REACH_START_KM, REACH_END_KM, SEA_KM_A, CROSSING_YEARS, GROUP_SHARE, END_SEA_DROP_M, ORIGIN_LANDMASS_KM2)),
         "simulation": object(table!(simulation:
             SPAN_YEARS, KEEP_YEARS, POPULATION_STEP, STEP_YEARS, PEOPLE_FRAME_STEP, CAME_STEP, SETTLE_AFTER, FISH_RICH,
             SUB_STEPS, FORAGER_DENSITY, CARRYING_FULL, GROWTH_A, SEED_SHARE, SEED_PEOPLE, FULL_SHARE,

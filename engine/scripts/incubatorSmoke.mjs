@@ -221,7 +221,7 @@ function goodsApart(pack) {
 // reach over sea or another lowest sea level reaches another share of the
 // land, and names another H1 (the default's stage unchanged).
 function peoplingControls(kind, rs, seed) {
-  const origin = rs.originOf()
+  const origin = rs.originOf(seed)
   const land = rs.bytes('land')
   const reached = (...controls) => {
     rs.people(Int32Array.of(origin), seed, ...controls)

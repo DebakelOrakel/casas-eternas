@@ -93,7 +93,7 @@ declare module 'casas-incubator-wasm/casas-incubator.js' {
     ints(name: string): Int32Array
     landmassKm2(): Float64Array
     iceKm(): Float32Array
-    originOf(): number
+    originOf(seed: number, reachKm?: number, seaLowM?: number): number
     growFlora(seed: number): void
     populate(seed: number): void
     floraCodes(): Uint8Array
