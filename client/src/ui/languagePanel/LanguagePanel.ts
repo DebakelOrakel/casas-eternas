@@ -243,13 +243,12 @@ export function createLanguagePanel(host: HTMLElement, options: {
       return
     }
     tree.replaceChildren(...renderTree({ view, index, year: shownYear(), sample: sample(), selected, expanded, whole, extinct, dialects, query }, {
-      // A click on the row selected folds or unfolds it; on another, it
-      // is selected and unfolds.
+      // A click on the row selected clears the choice (the map shows all
+      // the languages again; the arrow folds); on another, it is selected
+      // and unfolds.
       select: (id) => {
         if (id === selected) {
-          if (expanded.has(id)) expanded.delete(id)
-          else expanded.add(id)
-          paintTree()
+          selectNode(null)
           return
         }
         expanded.add(id)
