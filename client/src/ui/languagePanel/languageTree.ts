@@ -43,8 +43,10 @@ export interface TreeActions {
 }
 
 // Whether a node shows under the time and the filters (the search apart).
-export function shownByFilter(node: LanguageNode, state: Pick<TreeState, 'year' | 'extinct' | 'dialects'>): boolean {
-  if (!bornBy(node, state.year)) return false
+// A node shows from the time sample after its birth: before it, its
+// speakers are not counted yet and it would read 0 without a †.
+export function shownByFilter(node: LanguageNode, state: Pick<TreeState, 'view' | 'sample' | 'year' | 'extinct' | 'dialects'>): boolean {
+  if (!bornBy(node, Math.min(state.year, state.view.times[state.sample] ?? state.year))) return false
   if (node.level === 'dialect' && !state.dialects) return false
   if (node.level === 'family' || node.proto) return true
   return state.extinct || !extinctBy(node, state.year)
@@ -53,7 +55,7 @@ export function shownByFilter(node: LanguageNode, state: Pick<TreeState, 'year' 
 // The languages and the dialects below a node that are there at the time,
 // extinct or not as the filter says (the dialects' switch apart: a count is
 // of what there is). The roots of the families are not counted.
-export function countsBelow(index: LanguageIndex, id: string, state: Pick<TreeState, 'year' | 'extinct'>): { languages: number; dialects: number } {
+export function countsBelow(index: LanguageIndex, id: string, state: Pick<TreeState, 'view' | 'sample' | 'year' | 'extinct'>): { languages: number; dialects: number } {
   let languages = 0
   let dialects = 0
   const walk = (parent: string): void => {

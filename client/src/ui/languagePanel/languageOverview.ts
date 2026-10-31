@@ -178,7 +178,7 @@ export function renderOverview(state: OverviewState, actions: OverviewActions): 
   ].join(' · ')))
   // The full head: four figures.
   const from = origin(state)
-  const below = countsBelow(index, node.id, { year: state.year, extinct: true })
+  const below = countsBelow(index, node.id, { view, sample: state.sample, year: state.year, extinct: true })
   let world = 0
   for (const n of view.nodes) if (n.level === 'dialect' && bornBy(n, state.year) && !extinctBy(n, state.year)) world++
   const figures = el('div', 'language-overview__figures language-panel__full-only')
