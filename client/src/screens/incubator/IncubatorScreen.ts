@@ -1022,6 +1022,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const ERUPTION_RGB = [170, 60, 40] as const
   // The peoples' splits, merges and ends (peoples.rs Tree::tell).
   const PEOPLES_RGB = [150, 80, 60] as const
+  // The languages' rise and ends (casas-incubator languages.rs).
+  const LANGUAGES_RGB = [60, 130, 110] as const
   function sayChronicle(): void {
     eventPlaces.clear()
     const events: ChronicleEvent[] = []
@@ -1148,6 +1150,28 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
               : e.kind === 'peopleGone' ? t('incubator.chronicle.event.peopleGone', { a })
               : t('incubator.chronicle.event.peopleFarmers', { a }),
             detail: e.kind === 'peopleSplit' ? t('incubator.chronicle.peopleSplitDetail', { b: String(e.new + 1), ...measure }) : t('incubator.chronicle.peopleDetail', measure),
+          }, e.cell)
+        } else if (e.kind === 'languageArises' || e.kind === 'languageGone' || e.kind === 'familyGone') {
+          // The names are the world's content (languageView.ts
+          // LanguagesMade), not i18n; the people by its id from 1, as
+          // the peoples' events.
+          const made = peoples?.languages.made.nodes
+          const nodeName = (k: number): string => made?.[k]?.name || String(k + 1)
+          const people = String(e.people + 1)
+          place({
+            time: e.at,
+            icon: '/icons/lineage.png',
+            rgb: LANGUAGES_RGB,
+            title:
+              e.kind === 'languageArises' ? t('incubator.chronicle.event.languageArises', { name: nodeName(e.language) })
+              : e.kind === 'languageGone' ? t('incubator.chronicle.event.languageGone', { name: nodeName(e.language) })
+              : t('incubator.chronicle.event.familyGone', { name: nodeName(e.family) }),
+            detail:
+              e.kind === 'languageArises' ? t('incubator.chronicle.languageArisesDetail', { people, from: nodeName(e.from) })
+              : e.kind === 'familyGone' ? t('incubator.chronicle.familyGoneDetail', { people })
+              : e.replaced ? t('incubator.chronicle.languageReplacedDetail', { people, into: nodeName(e.into) })
+              : e.into >= 0 ? t('incubator.chronicle.languageMergedDetail', { people, into: nodeName(e.into) })
+              : t('incubator.chronicle.languageDiedOutDetail', { people }),
           }, e.cell)
         } else if (e.kind === 'extinct') {
           if (facts.landmassKm2[e.landmass] < EVENT_LEAST_KM2) continue
