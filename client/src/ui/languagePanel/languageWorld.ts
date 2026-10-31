@@ -40,14 +40,14 @@ function section(titleKey: TKey, fullOnly = false): { element: HTMLElement; body
 
 // A name's other names on one line, with no words of the interface (the
 // names and the languages' names are the world's content): its older
-// names, each "← name (language)", the latest first; then what other
-// languages call it, "language: name", " · " between two.
+// names, each "formerly name (language)", the latest first; then what other
+// languages call it, "language: name"; " · " between two.
 function otherNames(entry: NameEntry, languageName: (id: string) => string): string {
-  const older = (entry.older ?? []).map((o) => `← ${o.name} (${languageName(o.language)})`)
+  const older = (entry.older ?? []).map((o) => `${t('language.world.formerly', { name: o.name })} (${languageName(o.language)})`)
   const exonyms = entry.exonyms ?? []
-  const shown = exonyms.slice(0, EXONYMS_SHOWN).map((o) => `${languageName(o.language)}: ${o.name}`)
+  const shown = exonyms.slice(0, EXONYMS_SHOWN).map((o) => t('language.world.calledBy', { language: languageName(o.language), name: o.name }))
   if (exonyms.length > EXONYMS_SHOWN) shown.push('…')
-  return [older.join(' '), shown.join(' · ')].filter((x) => x !== '').join('   ')
+  return [older.join(' · '), shown.join(' · ')].filter((x) => x !== '').join('   ')
 }
 
 export function renderWorld(state: WorldState, actions: WorldActions): HTMLElement {

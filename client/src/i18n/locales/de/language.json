@@ -55,6 +55,8 @@
   "language.world.names": "Namen in dieser Sprache",
   "language.world.moreNames": "{count} weitere",
   "language.world.showAll": "alle zeigen",
+  "language.world.formerly": "früher {name}",
+  "language.world.calledBy": "auf {language} {name}",
   "language.place.village": "Dorf",
   "language.place.town": "Stadt",
   "language.place.river": "Fluss",
