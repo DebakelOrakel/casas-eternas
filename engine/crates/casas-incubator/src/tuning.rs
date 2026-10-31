@@ -75,7 +75,10 @@ use serde_json::{Map, Value, json};
 /// the latest (simulation.rs THE LATEST CITY); in a short step 2 the
 /// chronicle tells the splits and merges that held to its end and
 /// TOLD_SPAN_SHARE of it (peoples.rs `Tree::finish`, TEG-11), a long one
-/// the same events.
+/// the same events; in a desert (BW) the crops suit a cell whose best
+/// arable share reaches FARM_ARABLE (simulation.rs THE FLOODED DESERT),
+/// and the latest city is a town of CITY_LATEST_PEOPLE or more, else
+/// none (simulation.rs THE LATEST CITY).
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
@@ -142,7 +145,7 @@ pub fn constants() -> Value {
             STONE_CELLS, STONE_CHANCE, CROSSINGS_A_PAIR, VOYAGE_KM,
             COPPER_RICH, COPPER_DAYS, COPPER_VILLAGE_YEARS, COPPER_RATE, COPPER_SPACING_KM, COPPER_KM_A,
             SMELT_AFTER, SMELT_VILLAGE_YEARS, SMELT_RATE, CITY_DAYS, TOWN_SHARE, COPPER_SHARE, SMELT_SHARE,
-            TOWN_GROWTH_A, CITY_PEOPLE, CITY_LATEST_YEARS,
+            TOWN_GROWTH_A, CITY_PEOPLE, CITY_LATEST_YEARS, CITY_LATEST_PEOPLE,
         )),
         "peoples": object(table!(peoples:
             TRAITS, BRANCH_SHARE, BRANCH_ROUNDS, BRANCH_STEP, TRAIT_DRIFT, LANGUAGE_DRIFT, TRAIT_CONTACT, LANGUAGE_CONTACT,

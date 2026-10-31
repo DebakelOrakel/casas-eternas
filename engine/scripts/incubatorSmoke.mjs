@@ -162,7 +162,8 @@ function synthWorld(kind) {
     // three. Since the post-glacial rebound (TEG-22, 2026-10-31) seed 5
     // and 6 give no herding centre and no told merge; of the seeds 1 to 14
     // only 4 reaches all three. Since the latest city (TEG-10,
-    // 2026-10-31) the sphere's history ends at +20 000.
+    // 2026-10-31) the sphere's history ends at +20 000 (a farmers' town
+    // of 8 575 people, over CITY_LATEST_PEOPLE).
     seed: kind === 'sphere' ? 4 : 12345,
   }
 }

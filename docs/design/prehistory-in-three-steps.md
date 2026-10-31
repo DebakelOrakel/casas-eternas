@@ -795,6 +795,25 @@ Building since 2026-10-27:
   Zephyra's own origin (copper and city at +6 500; no copper, the city
   at +5 500 before). The smoke test's sphere (seed 4) ends at +20 000
   now (SPAN_YEARS before): a herding centre, 1 split and 2 merges told.
+- 2026-10-31 (v6 still): two follow-ups to the retune (TEG-10), as
+  decided. (1) THE FLOODED DESERT (simulation.rs `suits`): in a desert
+  (BW) the crops suit a cell whose best arable share reaches FARM_ARABLE,
+  out of their wild niche (the flood waters the field, as on the Nile).
+  Still no farming centre in a desert; what the fields carry keeps the
+  mean. The deserts farmed at the end (the origins that farm): Morvane
+  3 000 to 4 000 → 28 000 to 62 000 km², Thalassor 1 200 → 2 000,
+  Zephyra 41 000 to 63 000 → 320 000 to 349 000; the people at the end
+  +1 to +11 %, +0.02 %, +22 to +27 %. The times the same but Morvane
+  from 1 084 118 (the city +9 500 → +8 000) and Zephyra's copper from 2
+  more origins. (2) THE LATEST CITY needs a town of CITY_LATEST_PEOPLE
+  (5 000; Çatalhöyük 3 500 to 8 000), measured as for CITY_PEOPLE. Where
+  none has it at +20 000, step 2 goes on to the first that grows to it,
+  or to SPAN_YEARS without a city, as an origin whose people die out.
+  Zephyra's herders-only origin 1 263 679 (a camp of 37 the city before;
+  its largest camp 164) now runs to SPAN_YEARS with no city; the people
+  at the end 143 000 → 140 000, the same told events. No other origin
+  changes by it. The H1 pack, the chronicle and the client's step-2 end
+  take the history's end, not the city: no city was there before.
 
 Open:
 

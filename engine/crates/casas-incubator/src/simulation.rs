@@ -359,11 +359,26 @@ pub(crate) const HERD_BARRIER: f64 = 3.0;
 // more by the mean 33.3, 57.6 and 17.4 %, by the best 36.9, 61.9 and
 // 19.2 %; in the deserts (BW) 1.9, 1.0 and 4.1 % → 2.8, 1.8 and 5.5 %
 // (78 000, 21 000 and 476 000 km²). The wild crops' niche suits 12 000,
-// 8 000 and 149 000 km² of these: the crops, not the arable land, keep
+// 8 000 and 149 000 km² of these: the crops, not the arable land, kept
 // the fields from most desert floodplains. The deserts farmed at the
 // end (the own origin, with the rain) 3 500 → 3 500, 0 → 1 200 and
 // 30 000 → 63 000 km²; all the land farmed 12.2 → 12.6, 35.9 → 36.9 and
 // 9.1 → 9.8 %.
+// THE FLOODED DESERT (2026-10-31, decided): in a desert (BW) the crops
+// suit a cell whose best share reaches FARM_ARABLE, out of their wild
+// niche (`suits`): the flood waters the field, not the rain, as on the
+// Nile. No farming centre there still (CENTRE_ARABLE): only the fields'
+// spread reaches it. What the fields carry keeps the mean. The deserts
+// farmed at the end (eight origins a world, those that farm) 3 000 to
+// 4 000 → 28 000 to 62 000 km² on Morvane, 1 200 → 2 000 on Thalassor
+// (its deserts' floodplains lie away from the farmed land), 41 000 to
+// 63 000 → 320 000 to 349 000 on Zephyra; all the land farmed +0.1 to
+// +0.7 points on Morvane (−1.5 where the city comes earlier), +0.9 to
+// +1.1 on Zephyra, the people at the end +1 to +11 % on Morvane (−3 %
+// there), +0.02 % on Thalassor, +22 to +27 % on Zephyra.
+// Step 2's times the same, but Morvane from 1 084 118 (the city +9 500
+// → +8 000, before the smelting) and Zephyra's copper from 2 more
+// origins (+5 000, +6 000), before the city.
 pub(crate) const FARM_ARABLE: f64 = 0.3;
 pub(crate) const HERD_PASTURE: f64 = 0.3;
 pub(crate) const FARM_GAIN: f64 = 100.0;
@@ -517,10 +532,14 @@ pub(crate) const COPPER_SHARE: f64 = 0.1;
 pub(crate) const SMELT_SHARE: f64 = 0.25;
 pub(crate) const TOWN_GROWTH_A: f64 = 0.0005;
 pub(crate) const CITY_PEOPLE: f64 = 10_000.0;
-/// THE LATEST CITY (TEG-10, 2026-10-31): step 3 needs a first city, so
-/// step 2 has one. Where no town has grown to CITY_PEOPLE this many years
-/// after step 2's start, the largest town is the city; where no farmers'
-/// village stands then, the village or camp that draws the most people.
+/// THE LATEST CITY (TEG-10, 2026-10-31): step 3 needs a first city.
+/// Where no town has grown to CITY_PEOPLE this many years after step 2's
+/// start, the largest town of CITY_LATEST_PEOPLE or more is the city;
+/// where no farmers' village stands then, the village or camp that draws
+/// the most people. Where no town has CITY_LATEST_PEOPLE then, step 2
+/// goes on, and the first town that grows to it is the city; where none
+/// does, step 2 ends at SPAN_YEARS without a city (as an origin whose
+/// people die out).
 /// A fixed span, not a time after the farming or the smelting: these do
 /// not come on every world (a world of herders only, a world whose copper
 /// no village reaches). On the earth the first city came some 7 000 years
@@ -530,11 +549,20 @@ pub(crate) const CITY_PEOPLE: f64 = 10_000.0;
 /// origin, five cells of the largest landmass and two of the second)
 /// all have their city by CITY_PEOPLE at +4 500 to +9 500 where they
 /// farm, the town then 10 040 to 11 021: the deadline does not bind on
-/// them. It binds on Zephyra from 1 263 679 (a landmass of 1.7 M km²,
-/// herders only, no farmers' village; the history ran to SPAN_YEARS
-/// before): a camp of 37 people at +20 000. An origin whose people die
-/// out in step 1 (5 of the 24) has no city still, and runs to SPAN_YEARS.
+/// them. On Zephyra from 1 263 679 (a landmass of 1.7 M km², herders
+/// only, no farmers' village) a camp of 37 people was the city at
+/// +20 000 before CITY_LATEST_PEOPLE. An origin whose people die out in
+/// step 1 (5 of the 24) has no city, and runs to SPAN_YEARS.
 pub(crate) const CITY_LATEST_YEARS: f64 = 20_000.0;
+/// The least town that THE LATEST CITY makes the city (2026-10-31,
+/// decided): a large village, not a camp. Earth anchor: Çatalhöyük,
+/// 3 500 to 8 000 people (docs/design/earth-prehistory-sources.md).
+/// The town is measured as for CITY_PEOPLE: the share of its
+/// hinterland's people that the town draws. It binds on Zephyra from
+/// 1 263 679 alone (its largest camp 164 people): no city, step 2 runs
+/// to SPAN_YEARS. The smoke test's sphere (seed 4) has a farmers' town of
+/// 8 575 at +20 000 and ends there as before.
+pub(crate) const CITY_LATEST_PEOPLE: f64 = 5_000.0;
 
 fn camp_least(way: u8) -> f64 {
     if way == FORAGERS { 0.1 } else { 0.3 }
@@ -1101,7 +1129,11 @@ impl Sim<'_, '_> {
     fn suits(&self, d: usize, cell: usize) -> bool {
         let c = self.codes_of(d)[cell];
         if self.tamed[d].plant {
-            (c == 1 || c >= plant_suits_code()) && self.h.arable_best(cell) >= FARM_ARABLE
+            // THE FLOODED DESERT: in a desert (BW) the flood waters the
+            // field, not the rain, so the crops suit it where its arable
+            // land does, out of their wild niche (FARM_ARABLE).
+            (c == 1 || c >= plant_suits_code() || is_desert(self.h.koppen[cell]))
+                && self.h.arable_best(cell) >= FARM_ARABLE
         } else {
             c >= 1 && self.eco(PASTURE, cell) >= HERD_PASTURE
         }
@@ -2506,10 +2538,10 @@ pub fn simulate(
                     smelted,
                 });
             }
-            // The towns, and the first city: the history's end. At
-            // CITY_LATEST_YEARS the largest town is the city; where no
-            // farmers' village stands then, the villages and camps that
-            // stand are the seats.
+            // The towns, and the first city: the history's end. From
+            // CITY_LATEST_YEARS on the largest town of CITY_LATEST_PEOPLE
+            // or more is the city; where no farmers' village stands then,
+            // the villages and camps that stand are the seats.
             let late = t - t0 >= CITY_LATEST_YEARS;
             let standing = |v: usize, farmers: bool| {
                 village_to[v] == f64::INFINITY && (!farmers || villages[2 * v + 1] as u8 == FARMERS)
@@ -2561,7 +2593,8 @@ pub fn simulate(
             }
             if city.is_none() && late {
                 for (k, &v) in seats.iter().enumerate() {
-                    if city.is_none_or(|(_, most)| town[v] > most) {
+                    if town[v] >= CITY_LATEST_PEOPLE && city.is_none_or(|(_, most)| town[v] > most)
+                    {
                         city = Some((seat_cells[k], town[v]));
                     }
                 }
