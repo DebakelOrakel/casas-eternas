@@ -17,7 +17,7 @@ summary.de: Dörfer, Völker, Flüsse und Berge brauchen viele Namen, und die
 area: incubator
 stage: idea
 createdAt: 2026-10-28
-related: [DES-0032]
+related: [DES-0032, DEC-0054]
 ---
 
 ## Where this starts
@@ -141,13 +141,14 @@ hash goes into the keys of what is derived from it.
 
 ## Open
 
-1. The age that makes a language and not a dialect, and the size.
-2. Foreign names in the namers' spelling, or in the player's people's.
-3. Rust beside the peoples (job and WASM) or TypeScript in the client.
-4. Names the user sets for one place (a river): do they spread into the
-   exonyms?
-5. Start with step 2's merges and replacements, or wait for step 3's
-   conquests for the old names and loans.
+Decided 2026-10-31 in [DEC-0054](../decisions/made-languages.md):
+
+1. A language after some 1 500 years apart and when it is a big people;
+   else a dialect.
+2. Foreign names in the namers' spelling.
+3. Rust, in the incubator's engine beside the peoples.
+4. Names the user sets spread into the exonyms.
+5. Old names from step 2's merges and replacements on.
 
 Background: the survey of 2026-10-30 (mewo2's naming language, Zompist's
 Gen and SCA², Lexifer, Lexurgy, Vulgarlang, Dwarf Fortress, Azgaar).
