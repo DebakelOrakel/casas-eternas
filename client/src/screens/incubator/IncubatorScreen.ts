@@ -332,8 +332,15 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const languagePanel = createLanguagePanel(root, {
     // The node chosen stands out on the map's languages (TEG-148), while
     // that overlay is on.
+    // A choice turns the overlay on, unless the viewer picked another of
+    // its group by hand (TEG-148, decided 2026-10-31).
     onSelect: (id) => {
       languageChosen = id
+      if (id !== null && settlementShown !== 'languages' && !settlementByHand && layerState('settle:languages').available) {
+        settlementShown = 'languages'
+        showPlants()
+        return
+      }
       if (settlementShown === 'languages') showPlants()
     },
     onShowOnMap: (target) => {
@@ -350,6 +357,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let languageView: LanguageView | null = null
   // The view's node chosen in the languages panel, null for none.
   let languageChosen: string | null = null
+  // Whether the viewer picked a settlement layer other than the languages
+  // by hand: a language chosen then leaves the map as it is.
+  let settlementByHand = false
   // The tree and the log the view was made from, to make it again only
   // when one of them changes.
   let languagesFrom: { tree: unknown; log: unknown } = { tree: null, log: null }
@@ -800,6 +810,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       const row = isNoneLayer(id) ? null : id
       if (row !== null && !layerState(row).available) return
       pick.show(row)
+      if (group.id === 'settlement') settlementByHand = row !== null && row !== 'settle:languages'
       if (row !== null && ONE_OVERLAY.includes(group.id)) for (const other of ONE_OVERLAY) if (other !== group.id) picks[other]!.show(null)
       showPlants()
     },
