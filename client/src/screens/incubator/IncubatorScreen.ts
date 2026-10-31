@@ -679,7 +679,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // shown and hidden by its switch in the title bar (ui/titleBar/
   // PanelToggles), while the furniture shows.
   let furnitureShown = false
-  const panelToggles = createPanelToggles(titleBar.panels, 'incubator', ['actions', 'overlays', 'chronicle', 'languages'], () => showPanels())
+  const panelToggles = createPanelToggles(titleBar.panels, 'incubator', ['actions', 'overlays', 'languages', 'chronicle'], () => showPanels())
   function showPanels(): void {
     sidebar.setVisible(furnitureShown && panelToggles.shown('actions'))
     overlayList.setVisible(furnitureShown && panelToggles.shown('overlays'))
