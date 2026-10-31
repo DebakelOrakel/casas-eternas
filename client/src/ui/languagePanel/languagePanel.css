@@ -920,20 +920,23 @@
   background: var(--dc-hover);
 }
 
+/* The kinship's steps, one a row, top down: the family's start, the
+   changes that parted the languages, today. A wrapped horizontal line
+   read as two timelines. */
 .language-compare__timeline {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-start;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
   font-size: 11px;
+  line-height: 1.5;
   color: var(--dc-muted);
 }
 
 .language-compare__span {
-  flex: 1 1 16px;
-  min-width: 16px;
-  height: 1px;
+  width: 1px;
+  height: 8px;
+  margin-left: 3px;
   background: var(--dc-line2);
 }
 
